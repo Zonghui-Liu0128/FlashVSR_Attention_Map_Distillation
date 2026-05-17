@@ -5,10 +5,9 @@ tensors shaped ``[B, S, D]`` where ``S = f * h * w``. This standalone module
 keeps that layout and returns only the LSWA attention output ``[B, S, D]``;
 the caller remains responsible for any output projection.
 
-The original class stores ``num_heads`` separately, but the required standalone
-signature does not include it. FlashVSR/Wan Tiny LSWA uses 12 heads, so this
-module uses 12 when ``D`` is divisible by 12 and falls back to one head for
-small unit-test tensors that do not carry model config.
+The original class stores ``num_heads`` separately. This standalone helper
+requires callers to pass it explicitly so model config, tests, and runtime use
+the same head partitioning.
 """
 
 from __future__ import annotations
@@ -17,13 +16,6 @@ import torch
 
 
 _DEFAULT_QUERY_CHUNK_SIZE = 1024
-_REFERENCE_NUM_HEADS = 12
-
-
-def _infer_num_heads(dim: int) -> int:
-    if dim % _REFERENCE_NUM_HEADS == 0:
-        return _REFERENCE_NUM_HEADS
-    return 1
 
 
 @torch.no_grad()
@@ -42,6 +34,7 @@ def _local_spatial_attention(
     v_context: list[torch.Tensor],
     *,
     window_size: tuple[int, int, int],
+    num_heads: int,
     h: int,
     w: int,
 ) -> torch.Tensor:
@@ -53,7 +46,7 @@ def _local_spatial_attention(
     """
     B, L, D = q_frame.shape
     assert L == h * w, "Frame token length mismatch."
-    num_heads = _infer_num_heads(D)
+    assert D % num_heads == 0, "Embedding dim must be divisible by num_heads."
     head_dim = D // num_heads
     qh = q_frame.view(B, L, num_heads, head_dim).permute(0, 2, 1, 3).contiguous()
     kh_frames = [
@@ -112,6 +105,7 @@ def lswa_forward(
     V: torch.Tensor,
     *,
     window_size: tuple[int, int, int],
+    num_heads: int,
     f: int,
     h: int,
     w: int,
@@ -152,7 +146,15 @@ def lswa_forward(
             context_k = context_k[-temporal_window:]
             context_v = context_v[-temporal_window:]
 
-        out_i = _local_spatial_attention(q_i, context_k, context_v, window_size=window_size, h=h, w=w)
+        out_i = _local_spatial_attention(
+            q_i,
+            context_k,
+            context_v,
+            window_size=window_size,
+            num_heads=num_heads,
+            h=h,
+            w=w,
+        )
         out_frames.append(out_i)
 
     x = torch.cat(out_frames, dim=1)

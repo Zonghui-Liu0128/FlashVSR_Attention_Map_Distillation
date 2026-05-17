@@ -35,7 +35,7 @@ def test_lswa_output_shape_train_mode():
     Q = torch.randn(B, f * h * w, D)
     K = torch.randn(B, f * h * w, D)
     V = torch.randn(B, f * h * w, D)
-    out = lswa_forward(Q, K, V, window_size=(2, 5, 5), f=f, h=h, w=w)
+    out = lswa_forward(Q, K, V, window_size=(2, 5, 5), num_heads=1, f=f, h=h, w=w)
     assert out.shape == (B, f * h * w, D)
 
 
@@ -46,12 +46,12 @@ def test_lswa_is_causal_in_time():
     Q = torch.randn(B, f * h * w, D)
     K = torch.randn(B, f * h * w, D)
     V = torch.randn(B, f * h * w, D)
-    out_a = lswa_forward(Q, K, V, window_size=(2, 3, 3), f=f, h=h, w=w)
+    out_a = lswa_forward(Q, K, V, window_size=(2, 3, 3), num_heads=1, f=f, h=h, w=w)
     K2 = K.clone()
     V2 = V.clone()
     K2[:, 3 * h * w :, :] += 1.0
     V2[:, 3 * h * w :, :] += 1.0
-    out_b = lswa_forward(Q, K2, V2, window_size=(2, 3, 3), f=f, h=h, w=w)
+    out_b = lswa_forward(Q, K2, V2, window_size=(2, 3, 3), num_heads=1, f=f, h=h, w=w)
     assert torch.allclose(out_a[:, : 2 * h * w, :], out_b[:, : 2 * h * w, :], atol=1e-5)
 
 
@@ -95,7 +95,17 @@ def test_lswa_matches_reference_implementation():
             pre_cache_v=None,
         )
 
-    out_ours = lswa_forward(Q, K, V, window_size=(2, 5, 5), f=f, h=h, w=w, is_stream=False)
+    out_ours = lswa_forward(
+        Q,
+        K,
+        V,
+        window_size=(2, 5, 5),
+        num_heads=num_heads,
+        f=f,
+        h=h,
+        w=w,
+        is_stream=False,
+    )
 
     assert out_ref.shape == out_ours.shape, (out_ref.shape, out_ours.shape)
     assert torch.allclose(out_ref, out_ours, atol=1e-5), (
