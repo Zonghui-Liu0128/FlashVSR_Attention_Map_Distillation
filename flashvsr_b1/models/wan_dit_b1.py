@@ -240,6 +240,26 @@ class B1WanModel(wan_video_dit.WanModel):
     def _init_distill_layers_for_test(self):
         self.distill_layers = set(_DEFAULT_DISTILL_LAYERS)
 
+    def b1_forward(self, LR_latent, z_t, t_star, return_aux: bool = False):
+        """B1 one-step forward with LR latent conditioning and fixed timestep."""
+        B = z_t.shape[0]
+        device = z_t.device
+        x = z_t + LR_latent
+        if not torch.is_tensor(t_star):
+            t_star = torch.tensor(t_star, device=device)
+        if t_star.ndim == 0:
+            timestep = t_star.expand(B).to(device)
+        else:
+            timestep = t_star.to(device)
+        text_ctx_dim = getattr(self, "text_dim", 4096)
+        context = torch.zeros(B, 1, text_ctx_dim, device=device, dtype=x.dtype)
+        return self.forward(
+            x,
+            timestep,
+            context,
+            return_aux=return_aux,
+        )
+
     def _replace_self_attention_modules(
         self,
         *,

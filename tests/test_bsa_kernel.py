@@ -69,13 +69,17 @@ def test_bsa_parity_with_root_implementation():
                  int(window_size * seqlen) - 1)
 
     with torch.no_grad():
-        out_ref, _, _ = sa._block_sparse_forward(
+        out_ref = sa._block_sparse_forward(
             Q, K, V, B, f, h, w, D,
             local_num=0, topk=topk,
             kv_len=kv_len,
             is_stream=False, pre_cache_k=None, pre_cache_v=None,
             local_range=local_range,
         )
+        if isinstance(out_ref, tuple):
+            out_ref = out_ref[0]
+        # Both bsa_forward and the reference sparse path are compared at the
+        # tensor output returned by their block-sparse implementations.
         out_ours = bsa_forward(Q, K, V,
                                 block_size=(2,8,8),
                                 grid_shape=(f, h, w),

@@ -39,10 +39,14 @@ def shadow_block_pool_attn(Q: torch.Tensor, K: torch.Tensor, *,
     s = torch.einsum("bhid,bhjd->bhij", Q_blk, K_blk) / math.sqrt(d)
 
     if causal:
-        N_blk = s.shape[-1]
-        future_mask = torch.ones(
-            N_blk, N_blk, dtype=torch.bool, device=s.device
-        ).triu(diagonal=1)
+        _, h, w = grid_shape
+        _, bh, bw = block_size
+        spatial_blocks = (h // bh) * (w // bw)
+        Nq = s.shape[-2]
+        Nk = s.shape[-1]
+        t_q = torch.arange(Nq, device=s.device) // spatial_blocks
+        t_k = torch.arange(Nk, device=s.device) // spatial_blocks
+        future_mask = t_k[None, :] > t_q[:, None]
         s = s.masked_fill(future_mask, float("-inf"))
 
     return s.softmax(dim=-1)

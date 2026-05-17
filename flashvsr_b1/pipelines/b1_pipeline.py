@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 from typing import Any
+
+import torch
 
 from flashvsr_b1.models.flashvsr_components import (
     Causal_LQ4x_Proj,
@@ -44,12 +47,36 @@ def _as_tuple(value: Any) -> tuple:
     return tuple(value)
 
 
+def _iter_modules(model):
+    if hasattr(model, "modules") and "_modules" in getattr(model, "__dict__", {}):
+        yield from model.modules()
+        return
+    for block in getattr(model, "blocks", []):
+        attn = getattr(block, "self_attn", None)
+        if attn is not None:
+            yield attn
+
+
+def _iter_parameters(model):
+    if hasattr(model, "parameters") and "_parameters" in getattr(model, "__dict__", {}):
+        yield from model.parameters()
+
+
+def _module_device(model) -> torch.device:
+    for p in _iter_parameters(model):
+        return p.device
+    return torch.device("cpu")
+
+
 def _build_lpips_net():
     try:
         import lpips
     except (ImportError, ModuleNotFoundError):
         return None
-    return lpips.LPIPS(net="vgg").eval()
+    net = lpips.LPIPS(net="vgg").eval()
+    for p in net.parameters():
+        p.requires_grad_(False)
+    return net
 
 
 def _pretrained_kwargs_from_cfg(cfg: Any) -> dict[str, Any]:
@@ -114,6 +141,46 @@ class B1Pipeline(WanVideoPipeline):
             distill_layers=distill_layers,
             attn_mode=attn_mode,
         )
+        pipe.student = pipe.dit
+
+        teacher_ckpt = _cfg_get(cfg, "teacher_ckpt", None)
+        student_ckpt = _cfg_get(cfg, "student_ckpt", None)
+        if teacher_ckpt and teacher_ckpt != student_ckpt:
+            teacher_kwargs = dict(_pretrained_kwargs_from_cfg(cfg))
+            if ModelConfig is not None:
+                teacher_kwargs["model_configs"] = [
+                    ModelConfig(path=str(teacher_ckpt), skip_download=True)
+                ]
+            teacher_pipe = WanVideoPipeline.from_pretrained(**teacher_kwargs)
+            teacher_source = getattr(teacher_pipe, "dit", None)
+            if teacher_source is None:
+                raise ValueError("Teacher WanVideoPipeline.from_pretrained did not populate `dit`.")
+            if teacher_source is pipe.dit:
+                teacher_source = copy.deepcopy(pipe.dit)
+            teacher_dit = B1WanModel.from_wan_model(
+                teacher_source,
+                block_size=student_block_size,
+                window_size=window_size,
+                distill_layers=distill_layers,
+                attn_mode="BSA",
+            )
+        else:
+            teacher_dit = copy.deepcopy(pipe.dit)
+            teacher_dit._init_distill_layers_for_test()
+            for layer_idx, block in enumerate(teacher_dit.blocks):
+                block.self_attn.distill_export = layer_idx in teacher_dit.distill_layers
+
+        for module in _iter_modules(teacher_dit):
+            if hasattr(module, "current_sparsity"):
+                module.current_sparsity = 0.85
+            if hasattr(module, "attn_mode"):
+                module.attn_mode = "BSA"
+        if hasattr(teacher_dit, "eval") and "_modules" in getattr(teacher_dit, "__dict__", {}):
+            teacher_dit.eval()
+        for p in _iter_parameters(teacher_dit):
+            p.requires_grad_(False)
+        pipe.teacher = teacher_dit
+        pipe.teacher_dit = teacher_dit
 
         dim = int(_cfg_get(cfg, "dim", 1536))
         pipe.lq_proj = Causal_LQ4x_Proj(in_dim=3, out_dim=dim, layer_num=1)
@@ -123,4 +190,40 @@ class B1Pipeline(WanVideoPipeline):
 
         pipe.tc_decoder = build_tc_decoder(_cfg_get(cfg, "tc_decoder_ckpt", None))
         pipe.lpips_net = _build_lpips_net()
+        pipe.cfg_single_step_t = int(_cfg_get(cfg, "single_step_t", 999))
+        device = _module_device(pipe.dit)
+        pipe.lq_proj.to(device)
+        if hasattr(pipe.tc_decoder, "to"):
+            pipe.tc_decoder.to(device)
+        if pipe.lpips_net is not None and hasattr(pipe.lpips_net, "to"):
+            pipe.lpips_net.to(device)
         return pipe
+
+    def dit_device(self):
+        return _module_device(self.dit)
+
+    def prepare_batch(self, batch):
+        """Take a dataset batch and build the one-step B1 training tensors."""
+        device = self.dit_device()
+        lr_rgb = batch["lr"].to(device)
+        hr_rgb = batch["hr"].to(device)
+        self.lq_proj.to(device)
+        lr_latent = self.lq_proj(lr_rgb)
+        if lr_latent.ndim == 3:
+            latent_shape = batch.get("latent_shape", None)
+            if latent_shape is None:
+                raise ValueError("batch must include latent_shape when lq_proj returns flattened output")
+            if isinstance(latent_shape, torch.Tensor):
+                latent_shape = latent_shape.tolist()
+            if isinstance(latent_shape, (list, tuple)) and latent_shape and isinstance(latent_shape[0], (list, tuple)):
+                latent_shape = latent_shape[0]
+            t_lat, h_lat, w_lat = (int(v) for v in latent_shape)
+            b, c, n = lr_latent.shape
+            if n != t_lat * h_lat * w_lat:
+                raise ValueError(
+                    f"lq_proj token count {n} does not match latent_shape {(t_lat, h_lat, w_lat)}"
+                )
+            lr_latent = lr_latent.view(b, c, t_lat, h_lat, w_lat)
+        z_t = torch.randn_like(lr_latent)
+        t_star = torch.tensor(self.cfg_single_step_t, device=lr_latent.device)
+        return lr_latent, z_t, t_star, hr_rgb

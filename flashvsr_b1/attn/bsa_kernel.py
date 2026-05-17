@@ -173,6 +173,16 @@ def bsa_forward(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, *,
         topk=topk,
         local_attn_mask=local_window_mask,
     )
+    T_blk = f // bt
+    H_blk = h // bh
+    W_blk = w // bw
+    spatial_blocks = H_blk * W_blk
+    flat_q = torch.arange(T_blk * spatial_blocks, device=attention_mask.device)
+    flat_k = torch.arange(T_blk * spatial_blocks, device=attention_mask.device)
+    t_q = flat_q // spatial_blocks
+    t_k = flat_k // spatial_blocks
+    causal_mask = (t_k.unsqueeze(0) <= t_q.unsqueeze(1)).unsqueeze(0).unsqueeze(0)
+    attention_mask = attention_mask & causal_mask
 
     out = _block_sparse_attention(
         block_sparse_attn_func,

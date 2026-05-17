@@ -721,10 +721,11 @@ def test_tiny_config_defaults():
     assert c.out_dim == 16
 
 def test_lq_proj_forward_shape():
+    """Tiny shape to keep the unit test under 100 MB on macOS; real shapes only
+    matter on B200. Just confirms in_dim=3 in, out_dim=1536 out, no crash."""
     proj = Causal_LQ4x_Proj(in_dim=3, out_dim=1536, layer_num=1)
-    x = torch.randn(1, 3, 85, 1024, 1920)
+    x = torch.randn(1, 3, 4, 64, 96)
     out = proj(x)
-    # output dim is 1536 channels; spatial dim must match LR latent (64×120) for 1024×1920
     assert out.shape[1] == 1536
 
 def test_tc_decoder_builds_without_checkpoint():

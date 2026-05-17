@@ -56,7 +56,7 @@ def test_pipeline_replaces_self_attn_with_b1_variant():
     ):
         pipe = B1Pipeline.from_b1_config(_cfg())
 
-    from_pretrained.assert_called_once()
+    assert from_pretrained.call_count == 2
     assert all(isinstance(block.self_attn, SelfAttentionB1) for block in pipe.dit.blocks)
     assert {block.self_attn.block_size for block in pipe.dit.blocks} == {(2, 8, 8)}
 

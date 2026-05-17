@@ -34,7 +34,7 @@ def test_compute_loss_assembles_all_four_terms_for_bsa():
     # teacher returns (x_t, aux_t) where aux_t has h_out and A_blk per layer.
     h_t = {l: torch.zeros(1, 8, 4) for l in [4, 9, 14, 19, 24, 29]}
     A_t = {l: torch.zeros(1, 1, 4, 4) for l in [4, 9, 14, 19, 24, 29]}
-    trainer.teacher.return_value = (torch.zeros(1, 4, 4), {"h_out": h_t, "A_blk": A_t})
+    trainer.teacher.b1_forward.return_value = (torch.zeros(1, 4, 4), {"h_out": h_t, "A_blk": A_t})
 
     h_s = {
         l: torch.zeros(1, 8, 4, requires_grad=True)
@@ -43,7 +43,7 @@ def test_compute_loss_assembles_all_four_terms_for_bsa():
     A_s = {
         l: torch.zeros(1, 1, 4, 4).softmax(-1) for l in [4, 9, 14, 19, 24, 29]
     }
-    trainer.student.return_value = (
+    trainer.student.b1_forward.return_value = (
         torch.zeros(1, 4, 4, requires_grad=True),
         {"h_out": h_s, "A_blk": A_s},
     )
@@ -76,13 +76,13 @@ def test_compute_loss_skips_block_for_lswa():
     trainer.lpips_net = MagicMock()
 
     h_t = {l: torch.zeros(1, 8, 4) for l in [4, 9, 14, 19, 24, 29]}
-    trainer.teacher.return_value = (torch.zeros(1, 4, 4), {"h_out": h_t})
+    trainer.teacher.b1_forward.return_value = (torch.zeros(1, 4, 4), {"h_out": h_t})
 
     h_s = {
         l: torch.zeros(1, 8, 4, requires_grad=True)
         for l in [4, 9, 14, 19, 24, 29]
     }
-    trainer.student.return_value = (
+    trainer.student.b1_forward.return_value = (
         torch.zeros(1, 4, 4, requires_grad=True),
         {"h_out": h_s},
     )
@@ -119,7 +119,7 @@ def test_compute_loss_set_current_sparsity_called_for_bsa_only():
         trainer_bsa.lpips_net = MagicMock()
         h_t = {l: torch.zeros(1, 8, 4) for l in [4, 9, 14, 19, 24, 29]}
         A_t = {l: torch.zeros(1, 1, 4, 4) for l in [4, 9, 14, 19, 24, 29]}
-        trainer_bsa.teacher.return_value = (
+        trainer_bsa.teacher.b1_forward.return_value = (
             torch.zeros(1, 4, 4),
             {"h_out": h_t, "A_blk": A_t},
         )
@@ -131,7 +131,7 @@ def test_compute_loss_set_current_sparsity_called_for_bsa_only():
             l: torch.zeros(1, 1, 4, 4).softmax(-1)
             for l in [4, 9, 14, 19, 24, 29]
         }
-        trainer_bsa.student.return_value = (
+        trainer_bsa.student.b1_forward.return_value = (
             torch.zeros(1, 4, 4, requires_grad=True),
             {"h_out": h_s, "A_blk": A_s},
         )
@@ -157,12 +157,12 @@ def test_compute_loss_set_current_sparsity_called_for_bsa_only():
         trainer_lswa.vae_decoder = MagicMock()
         trainer_lswa.lpips_net = MagicMock()
         h_t = {l: torch.zeros(1, 8, 4) for l in [4, 9, 14, 19, 24, 29]}
-        trainer_lswa.teacher.return_value = (torch.zeros(1, 4, 4), {"h_out": h_t})
+        trainer_lswa.teacher.b1_forward.return_value = (torch.zeros(1, 4, 4), {"h_out": h_t})
         h_s = {
             l: torch.zeros(1, 8, 4, requires_grad=True)
             for l in [4, 9, 14, 19, 24, 29]
         }
-        trainer_lswa.student.return_value = (
+        trainer_lswa.student.b1_forward.return_value = (
             torch.zeros(1, 4, 4, requires_grad=True),
             {"h_out": h_s},
         )

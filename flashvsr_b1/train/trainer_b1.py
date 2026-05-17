@@ -57,6 +57,14 @@ def _to_plain_container(value: Any) -> Any:
     return value
 
 
+def _require_omegaconf():
+    try:
+        from omegaconf import OmegaConf
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise RuntimeError("OmegaConf is required for train_main/build_dataloader.") from exc
+    return OmegaConf
+
+
 def _detach_aux(value: Any) -> Any:
     if torch.is_tensor(value):
         return value.detach()
@@ -132,17 +140,21 @@ class B1Trainer(DiffusionTrainingModule):
         self.vae_decoder = getattr(pipe, "vae_decoder", None) or getattr(pipe, "tc_decoder", None)
         self.lpips_net = getattr(pipe, "lpips_net", None)
         if self.teacher is None:
-            self.teacher = self.student
+            raise ValueError("B1Pipeline must expose a separate frozen teacher.")
+        if self.teacher is self.student:
+            raise ValueError("B1Pipeline teacher and student must be separate model instances.")
         if self.student is None or self.vae_decoder is None or self.lpips_net is None:
             raise ValueError("B1Pipeline did not expose student, vae_decoder/tc_decoder, and lpips_net.")
 
     def _assert_block_size_match(self) -> None:
-        block_size = tuple(_cfg_get(self.cfg, "block_size", (2, 8, 8)))
-        teacher_block_size = tuple(_cfg_get(self.cfg, "teacher_block_size", block_size))
-        student_block_size = tuple(_cfg_get(self.cfg, "student_block_size", block_size))
-        assert teacher_block_size == student_block_size, (
-            f"teacher/student block_size mismatch: {teacher_block_size} != {student_block_size}"
-        )
+        target = tuple(_cfg_get(self.cfg, "block_size", (2, 8, 8)))
+        for label, model in [("teacher", self.teacher), ("student", self.student)]:
+            for module in model.modules():
+                if hasattr(module, "block_size"):
+                    block_size = tuple(module.block_size)
+                    assert block_size == target, (
+                        f"{label}.block_size {block_size} != cfg.block_size {target}"
+                    )
 
     def prepare_batch(self, batch):
         if hasattr(self.pipeline, "prepare_batch"):
@@ -150,10 +162,11 @@ class B1Trainer(DiffusionTrainingModule):
         raise NotImplementedError("B1Trainer.prepare_batch must be provided by pipeline integration.")
 
     def _forward_model(self, model, LR_latent, z_t, t_star):
-        freqs = getattr(self, "freqs", None)
-        if freqs is None:
-            return model(LR_latent, z_t, t_star, return_aux=True)
-        return model(LR_latent, z_t, t_star, freqs, return_aux=True)
+        if hasattr(model, "b1_forward"):
+            return model.b1_forward(LR_latent, z_t, t_star, return_aux=True)
+        if hasattr(model, "module") and hasattr(model.module, "b1_forward"):
+            return model.module.b1_forward(LR_latent, z_t, t_star, return_aux=True)
+        raise RuntimeError(f"Model has no b1_forward: {type(model)}")
 
     def compute_loss(self, batch, step: int) -> tuple[torch.Tensor, dict]:
         LR_latent, z_t, t_star, gt_hr = self.prepare_batch(batch)
@@ -240,3 +253,183 @@ class B1Trainer(DiffusionTrainingModule):
             cfg_dict=_to_plain_container(self.cfg),
         )
         update_latest_symlink(self.run_dir, path)
+
+
+def build_optimizer_and_scheduler(model, cfg):
+    train_cfg = _cfg_get(cfg, "train", {})
+    lr = float(_cfg_get(train_cfg, "lr_backbone", 1e-5))
+    wd = float(_cfg_get(train_cfg, "wd", 0.0))
+    betas = tuple(_cfg_get(train_cfg, "betas", [0.9, 0.99]))
+    optim = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=lr,
+        weight_decay=wd,
+        betas=betas,
+    )
+    return optim, None
+
+
+def build_dataloader(cfg):
+    """Construct dataloader with AspectRatioBucketSampler + DDP."""
+    from flashvsr_b1.data.bucket_sampler import AspectRatioBucketSampler
+    from flashvsr_b1.data.dataset_b1 import DatasetB1
+
+    OmegaConf = _require_omegaconf()
+    data_cfg_path = _cfg_get(
+        _cfg_get(cfg, "data", {}), "cfg", "flashvsr_b1/configs/data_b1.yaml"
+    )
+    data_cfg = OmegaConf.load(data_cfg_path)
+    dataset = DatasetB1(OmegaConf.to_container(data_cfg, resolve=True))
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+    train_cfg = _cfg_get(cfg, "train", {})
+    batch_size = int(_cfg_get(train_cfg, "per_rank_batch", 1))
+    sampler = AspectRatioBucketSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+        batch_size=batch_size,
+        seed=int(_cfg_get(train_cfg, "seed", 42)),
+    )
+    data_cfg_runtime = _cfg_get(cfg, "data", {})
+    num_workers = int(_cfg_get(data_cfg_runtime, "num_workers", 8))
+    kwargs = {}
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = int(_cfg_get(data_cfg_runtime, "prefetch_factor", 2))
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_sampler=None,
+        sampler=sampler,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        **kwargs,
+    )
+
+
+class _NullCtx:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *args):
+        return False
+
+
+def _maybe_eval(trainer: B1Trainer, cfg, step: int) -> None:
+    eval_cfg = _cfg_get(cfg, "eval", {})
+    val_json = _cfg_get(eval_cfg, "val_json", None)
+    if not val_json or not os.path.exists(str(val_json)) or not _is_rank0():
+        return
+    from eval.eval_sr import evaluate_checkpoint
+
+    ckpt_path = save_checkpoint_file(
+        trainer.run_dir,
+        step=step,
+        config_stem=Path(trainer.config_path).stem,
+        student=trainer.student,
+        optimizer=trainer.optimizer,
+        scheduler=getattr(trainer, "scheduler", None),
+        current_sparsity=current_sparsity_of(trainer.student),
+        cfg_dict=_to_plain_container(cfg),
+    )
+    metrics = evaluate_checkpoint(
+        ckpt_path,
+        str(val_json),
+        _to_plain_container(cfg),
+        device="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    eval_dir = os.path.join(trainer.run_dir, "eval")
+    os.makedirs(eval_dir, exist_ok=True)
+    with open(os.path.join(eval_dir, f"step_{step:09d}.json"), "w") as fp:
+        import json
+
+        json.dump(metrics, fp, indent=2, sort_keys=True)
+
+
+def train_main(config_path: str, overrides: list[str] | None = None):
+    """Single entry point: setup, train, periodically save/evaluate."""
+    OmegaConf = _require_omegaconf()
+    cfg = OmegaConf.load(config_path)
+    if overrides:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(overrides))
+
+    train_cfg = _cfg_get(cfg, "train", {})
+    seed = int(_cfg_get(train_cfg, "seed", 42))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if not _cfg_get(train_cfg, "cudnn_benchmark", False):
+        torch.backends.cudnn.benchmark = False
+
+    local_rank = 0
+    if "LOCAL_RANK" in os.environ and not dist.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend)
+        local_rank = int(os.environ["LOCAL_RANK"])
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+
+    trainer = B1Trainer(cfg, config_path=config_path)
+    trainer.optimizer, trainer.scheduler = build_optimizer_and_scheduler(trainer.student, cfg)
+
+    if dist.is_available() and dist.is_initialized():
+        trainer.student = torch.nn.parallel.DistributedDataParallel(
+            trainer.student,
+            device_ids=[local_rank] if torch.cuda.is_available() else None,
+            output_device=local_rank if torch.cuda.is_available() else None,
+            find_unused_parameters=False,
+        )
+
+    dl = build_dataloader(cfg)
+    total_steps = int(_cfg_get(train_cfg, "total_steps", 20000))
+    ckpt_every = int(_cfg_get(_cfg_get(cfg, "logging", {}), "ckpt_every_steps", 2000))
+    eval_every = int(_cfg_get(_cfg_get(cfg, "eval", {}), "every_steps", 1000))
+    precision = str(_cfg_get(train_cfg, "precision", "bf16"))
+
+    step = 0
+    epoch = 0
+    if precision == "bf16":
+        autocast_dtype = torch.bfloat16
+    elif precision == "fp16":
+        autocast_dtype = torch.float16
+    else:
+        autocast_dtype = None
+
+    try:
+        while step < total_steps:
+            trainer._epoch = epoch
+            sampler = getattr(dl, "sampler", None)
+            if hasattr(sampler, "set_epoch"):
+                sampler.set_epoch(epoch)
+            for batch in dl:
+                if step >= total_steps:
+                    break
+                if autocast_dtype is not None and torch.cuda.is_available():
+                    ctx = torch.cuda.amp.autocast(dtype=autocast_dtype)
+                else:
+                    ctx = _NullCtx()
+                with ctx:
+                    trainer.training_step(batch, step)
+                step += 1
+                if step % ckpt_every == 0:
+                    trainer.save_checkpoint(step)
+                if eval_every > 0 and step % eval_every == 0:
+                    _maybe_eval(trainer, cfg, step)
+            epoch += 1
+
+        trainer.save_checkpoint(step)
+    finally:
+        trainer.metrics.close()
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("overrides", nargs="*")
+    args = parser.parse_args()
+    train_main(args.config, args.overrides)
