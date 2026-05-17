@@ -1,0 +1,77 @@
+import pytest, torch
+from flashvsr_b1.attn.bsa_kernel import topk_for, bsa_forward
+
+
+def test_topk_for_85pct():
+    assert topk_for(0.85, 1320) == 198
+
+
+def test_topk_for_90pct():
+    assert topk_for(0.90, 1320) == 132
+
+
+def test_topk_for_95pct():
+    assert topk_for(0.95, 1320) == 66
+
+
+def test_topk_for_clamps_to_one():
+    assert topk_for(0.999, 10) == 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(),
+                    reason="bsa_forward requires CUDA + block_sparse_attn lib")
+def test_bsa_forward_shape():
+    torch.manual_seed(0)
+    B, S, D, H = 1, 22*8*15, 128, 4
+    Q = torch.randn(B, S, D, device="cuda")
+    K = torch.randn(B, S, D, device="cuda")
+    V = torch.randn(B, S, D, device="cuda")
+    out = bsa_forward(Q, K, V,
+                      block_size=(2,8,8), grid_shape=(22,8,15),
+                      current_sparsity=0.85,
+                      num_heads=H, local_window_mask=None)
+    assert out.shape == (B, S, D)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(),
+                    reason="parity test requires CUDA")
+def test_bsa_parity_with_root_implementation():
+    """
+    Build the same SelfAttention object from root wan_video_dit.py with topk
+    corresponding to 85% sparsity, run _block_sparse_forward, compare with
+    bsa_forward output (same Q/K/V, same seed, same block_size). atol=1e-4.
+    """
+    import importlib.util, sys
+    REF_PATH = "/Users/zonghuiliu/Documents/Codex/VideoGen/FlashVSR_Attention_Map_Distillation/wan_video_dit.py"
+    spec = importlib.util.spec_from_file_location("ref_wan_video_dit", REF_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("ref_wan_video_dit", mod)
+    spec.loader.exec_module(mod)
+
+    torch.manual_seed(0)
+    B, f, h, w = 1, 22, 8, 15
+    D = 96
+    num_heads = 12
+    Q = torch.randn(B, f*h*w, D, device="cuda")
+    K = torch.randn(B, f*h*w, D, device="cuda")
+    V = torch.randn(B, f*h*w, D, device="cuda")
+
+    sa = mod.SelfAttention(dim=D, num_heads=num_heads).eval().cuda()
+    total_blocks = (f//2) * (h//8) * (w//8)
+    topk = max(1, int(round(total_blocks * 0.15)))
+
+    with torch.no_grad():
+        out_ref = sa._block_sparse_forward(
+            Q, K, V, B, f, h, w, D,
+            local_num=0, topk=topk,
+            is_stream=False, pre_cache_k=None, pre_cache_v=None,
+        )
+        out_ours = bsa_forward(Q, K, V,
+                                block_size=(2,8,8),
+                                grid_shape=(f, h, w),
+                                current_sparsity=0.85,
+                                num_heads=num_heads,
+                                local_window_mask=None)
+
+    assert out_ref.shape == out_ours.shape
+    assert torch.allclose(out_ref, out_ours, atol=1e-4)
