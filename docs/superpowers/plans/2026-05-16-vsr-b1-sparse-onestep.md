@@ -271,12 +271,15 @@ def test_shadow_attention_causal_zeros_future_columns():
 
 def test_shadow_attention_grad_flows_to_Q_and_K():
     _set_seed()
-    B, H, T, Hh, Ww, d = 1, 1, 2, 8, 8, 4
+    # N_blk must be >= 2 AND the loss must depend on individual softmax
+    # probabilities (not row sums, which are always 1.0 → grad = 0).
+    B, H, T, Hh, Ww, d = 1, 1, 4, 8, 8, 4   # N_blk = 2 * 1 * 1 = 2
     Q = torch.randn(B, H, T*Hh*Ww, d, requires_grad=True)
     K = torch.randn(B, H, T*Hh*Ww, d, requires_grad=True)
     A = shadow_block_pool_attn(Q, K, block_size=(2,8,8),
                                 grid_shape=(T, Hh, Ww), causal=True)
-    A.sum().backward()
+    # Loss on a single probability (A[..., 1, 0]) — non-constant function of Q,K.
+    A[..., 1, 0].sum().backward()
     assert Q.grad is not None and Q.grad.abs().sum() > 0
     assert K.grad is not None and K.grad.abs().sum() > 0
 ```
