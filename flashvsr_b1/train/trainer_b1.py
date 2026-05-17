@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+import torch
+import torch.distributed as dist
+
+from flashvsr_b1.losses.attn_out_loss import L_attn_out
+from flashvsr_b1.losses.block_kl_loss import L_block
+from flashvsr_b1.losses.lpips_loss import L_lpips
+from flashvsr_b1.losses.output_loss import L_output
+from flashvsr_b1.train.ckpt_io import save_checkpoint as save_checkpoint_file
+from flashvsr_b1.train.ckpt_io import update_latest_symlink
+from flashvsr_b1.train.lambda_schedule import lambda_at, sparsity_at
+from flashvsr_b1.train.metrics_logger import MetricsLogger, make_run_dir
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DIFFSYNTH_ROOT = _REPO_ROOT / "DiffSynth-Studio"
+
+if _DIFFSYNTH_ROOT.exists() and str(_DIFFSYNTH_ROOT) not in sys.path:
+    sys.path.insert(0, str(_DIFFSYNTH_ROOT))
+
+try:
+    from diffsynth.diffusion import DiffusionTrainingModule
+except Exception:  # pragma: no cover - only used if DiffSynth deps are unavailable.
+
+    class DiffusionTrainingModule(torch.nn.Module):  # type: ignore[no-redef]
+        def __init__(self):
+            super().__init__()
+
+
+def _cfg_get(cfg: Any, name: str, default: Any = None) -> Any:
+    if isinstance(cfg, dict):
+        return cfg.get(name, default)
+    return getattr(cfg, name, default)
+
+
+def _to_plain_container(value: Any) -> Any:
+    try:
+        from omegaconf import OmegaConf
+    except (ImportError, ModuleNotFoundError):
+        OmegaConf = None
+
+    if OmegaConf is not None and OmegaConf.is_config(value):
+        return OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, dict):
+        return {k: _to_plain_container(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_plain_container(v) for v in value]
+    if hasattr(value, "__dict__") and not isinstance(value, torch.nn.Module):
+        return {k: _to_plain_container(v) for k, v in vars(value).items()}
+    return value
+
+
+def _detach_aux(value: Any) -> Any:
+    if torch.is_tensor(value):
+        return value.detach()
+    if isinstance(value, dict):
+        return {k: _detach_aux(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_detach_aux(v) for v in value)
+    if isinstance(value, list):
+        return [_detach_aux(v) for v in value]
+    return value
+
+
+def _mean_layer_loss(loss_fn, lhs_by_layer: dict, rhs_by_layer: dict, layers) -> torch.Tensor:
+    losses = [loss_fn(lhs_by_layer[layer], rhs_by_layer[layer]) for layer in layers]
+    if not losses:
+        raise ValueError("distill_layers must contain at least one layer")
+    return torch.stack(losses).mean()
+
+
+def _world_size() -> int:
+    return dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+
+
+def _is_rank0() -> bool:
+    return (not dist.is_available()) or (not dist.is_initialized()) or dist.get_rank() == 0
+
+
+def current_sparsity_of(model: torch.nn.Module) -> float:
+    for module in model.modules():
+        if hasattr(module, "current_sparsity"):
+            return float(module.current_sparsity)
+    return float(getattr(model, "current_sparsity", 0.0))
+
+
+class B1Trainer(DiffusionTrainingModule):
+    def __init__(self, cfg, config_path: str):
+        super().__init__()
+        self.cfg = cfg
+        self.config_path = config_path
+        self._epoch = 0
+
+        log_root = _cfg_get(_cfg_get(cfg, "logging", {}), "log_root", "log")
+        self.run_dir = make_run_dir(log_root, config_path)
+        if _is_rank0() and os.path.exists(config_path):
+            os.makedirs(self.run_dir, exist_ok=True)
+            shutil.copy(config_path, os.path.join(self.run_dir, "config_snapshot.yaml"))
+
+        self._build_components()
+        self._assert_block_size_match()
+
+        train_cfg = _cfg_get(cfg, "train", {})
+        logging_cfg = _cfg_get(cfg, "logging", {})
+        global_batch = (
+            int(_cfg_get(train_cfg, "per_rank_batch", 1))
+            * _world_size()
+            * int(_cfg_get(train_cfg, "grad_accum", 1))
+        )
+        self.metrics = MetricsLogger(
+            run_dir=self.run_dir,
+            global_batch=global_batch,
+            world_size=_world_size(),
+            log_every_steps=int(_cfg_get(logging_cfg, "log_every_steps", 50)),
+            ema_span=int(_cfg_get(logging_cfg, "ema_span", 100)),
+        )
+
+    def _build_components(self) -> None:
+        from flashvsr_b1.pipelines.b1_pipeline import B1Pipeline
+
+        pipe = B1Pipeline.from_b1_config(self.cfg)
+        self.pipeline = pipe
+        self.teacher = getattr(pipe, "teacher", None) or getattr(pipe, "teacher_dit", None)
+        self.student = getattr(pipe, "student", None) or getattr(pipe, "dit", None)
+        self.vae_decoder = getattr(pipe, "vae_decoder", None) or getattr(pipe, "tc_decoder", None)
+        self.lpips_net = getattr(pipe, "lpips_net", None)
+        if self.teacher is None:
+            self.teacher = self.student
+        if self.student is None or self.vae_decoder is None or self.lpips_net is None:
+            raise ValueError("B1Pipeline did not expose student, vae_decoder/tc_decoder, and lpips_net.")
+
+    def _assert_block_size_match(self) -> None:
+        block_size = tuple(_cfg_get(self.cfg, "block_size", (2, 8, 8)))
+        teacher_block_size = tuple(_cfg_get(self.cfg, "teacher_block_size", block_size))
+        student_block_size = tuple(_cfg_get(self.cfg, "student_block_size", block_size))
+        assert teacher_block_size == student_block_size, (
+            f"teacher/student block_size mismatch: {teacher_block_size} != {student_block_size}"
+        )
+
+    def prepare_batch(self, batch):
+        if hasattr(self.pipeline, "prepare_batch"):
+            return self.pipeline.prepare_batch(batch)
+        raise NotImplementedError("B1Trainer.prepare_batch must be provided by pipeline integration.")
+
+    def _forward_model(self, model, LR_latent, z_t, t_star):
+        freqs = getattr(self, "freqs", None)
+        if freqs is None:
+            return model(LR_latent, z_t, t_star, return_aux=True)
+        return model(LR_latent, z_t, t_star, freqs, return_aux=True)
+
+    def compute_loss(self, batch, step: int) -> tuple[torch.Tensor, dict]:
+        LR_latent, z_t, t_star, gt_hr = self.prepare_batch(batch)
+        attn_mode = getattr(self.student, "attn_mode", _cfg_get(self.cfg, "attn_mode", "BSA"))
+
+        if attn_mode == "BSA":
+            from flashvsr_b1.attn.sparsity_schedule import set_current_sparsity
+
+            set_current_sparsity(
+                self.student,
+                sparsity_at(step, target=float(_cfg_get(self.cfg, "target_sparsity", 0.90))),
+            )
+
+        with torch.no_grad():
+            x_t, aux_t = self._forward_model(self.teacher, LR_latent, z_t, t_star)
+        aux_t = _detach_aux(aux_t)
+
+        x_s, aux_s = self._forward_model(self.student, LR_latent, z_t, t_star)
+        layers = list(_cfg_get(self.cfg, "distill_layers", [4, 9, 14, 19, 24, 29]))
+
+        loss_dict = {
+            "out": L_output(x_s, x_t.detach()),
+            "lpips": L_lpips(x_s, gt_hr, self.vae_decoder, self.lpips_net),
+            "attn_out": _mean_layer_loss(
+                L_attn_out,
+                aux_s["h_out"],
+                aux_t["h_out"],
+                layers,
+            ),
+        }
+        if attn_mode == "BSA":
+            loss_dict["block"] = _mean_layer_loss(
+                L_block,
+                aux_t["A_blk"],
+                aux_s["A_blk"],
+                layers,
+            )
+
+        lam = lambda_at(step)
+        total = (
+            lam["l1"] * loss_dict["out"]
+            + lam["l2"] * loss_dict["lpips"]
+            + lam["l4"] * loss_dict["attn_out"]
+        )
+        if "block" in loss_dict:
+            total = total + lam["l3"] * loss_dict["block"]
+        return total, loss_dict
+
+    def training_step(self, batch, step: int) -> None:
+        loss, loss_dict = self.compute_loss(batch, step)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.student.parameters(),
+            float(_cfg_get(_cfg_get(self.cfg, "train", {}), "grad_clip", 1.0)),
+        )
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+        loss_dict["total"] = loss
+        self.metrics.step(
+            step,
+            loss_dict={
+                k: (v.item() if torch.is_tensor(v) else float(v))
+                for k, v in loss_dict.items()
+            },
+            lam=lambda_at(step),
+            sparsity=current_sparsity_of(self.student),
+            lr=self.optimizer.param_groups[0]["lr"],
+            epoch=self._epoch,
+        )
+
+    def save_checkpoint(self, step: int) -> None:
+        if not _is_rank0():
+            return
+
+        path = save_checkpoint_file(
+            self.run_dir,
+            step=step,
+            config_stem=Path(self.config_path).stem,
+            student=self.student,
+            optimizer=self.optimizer,
+            scheduler=getattr(self, "scheduler", None),
+            current_sparsity=current_sparsity_of(self.student),
+            cfg_dict=_to_plain_container(self.cfg),
+        )
+        update_latest_symlink(self.run_dir, path)
