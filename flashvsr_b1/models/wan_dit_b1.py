@@ -215,17 +215,48 @@ class B1WanModel(wan_video_dit.WanModel):
         super().__init__(*args, **kwargs)
         self._replace_self_attention_modules()
 
+    @classmethod
+    def from_wan_model(
+        cls,
+        wan_model,
+        *,
+        block_size=(2, 8, 8),
+        window_size=(2, 21, 21),
+        distill_layers=None,
+        attn_mode="BSA",
+    ):
+        b1_model = cls.__new__(cls)
+        b1_model.__dict__.update(getattr(wan_model, "__dict__", {}))
+        b1_model.distill_layers = set(
+            _DEFAULT_DISTILL_LAYERS if distill_layers is None else distill_layers
+        )
+        b1_model._replace_self_attention_modules(
+            block_size=block_size,
+            window_size=window_size,
+            attn_mode=attn_mode,
+        )
+        return b1_model
+
     def _init_distill_layers_for_test(self):
         self.distill_layers = set(_DEFAULT_DISTILL_LAYERS)
 
-    def _replace_self_attention_modules(self) -> None:
+    def _replace_self_attention_modules(
+        self,
+        *,
+        block_size=(2, 8, 8),
+        window_size=(2, 21, 21),
+        attn_mode="BSA",
+    ) -> None:
         for layer_idx, block in enumerate(self.blocks):
             old_attn = block.self_attn
             new_attn = SelfAttentionB1(
                 old_attn.dim,
                 old_attn.num_heads,
+                block_size=block_size,
+                window_size=window_size,
                 distill_export=layer_idx in self.distill_layers,
             )
+            new_attn.attn_mode = attn_mode
             new_attn.copy_from_wan_self_attention(old_attn)
             block.self_attn = new_attn
 
