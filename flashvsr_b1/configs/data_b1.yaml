@@ -1,0 +1,102 @@
+# Metadata-driven FlashVSR/LSWA data config for internal B200 smoke/bring-up.
+# Target: 85 frames, 1024x1920 crop, no resize before degradation.
+
+train_mode: 0
+
+datapath_config_method: metadata_json
+metadata_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_LSWA_B200-main/data/animal_videos/stage1/scenes.json"
+sample_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_LSWA_B200-main/data/animal_videos/stage1/train_samples.json"
+rebuild_sample_json: false                          # set true after changing crop/frame/sampling policy
+read_resolution_with_cv2: true
+strict_path_exists: true
+
+# video reader
+reader_backend: "cv2"
+input_color: "bgr"
+output_color: "rgb"
+strict_decode: true
+allow_decode_fail_pad: false
+max_retry: 5
+
+# clip sampling: scene -> 85-frame clips. Tail clip is added to use the end of long scenes.
+frame_num: 85
+temporal_stride: 85
+include_tail_clip: true
+max_clips_per_scene: 0          # 0 = unlimited
+shuffle_samples: true
+max_samples: 0                  # 0 = all
+
+# spatial crop: resolution-aware crop planner, no resize before degradation.
+scl_factor: 4.0
+crop_height: 1024
+crop_width: 1920
+min_source_width: 1920
+min_source_height: 1024
+max_source_width: 2560
+max_source_height: 1440
+center_crop_max_width: 2304     # 1920-level sources use center crop only
+center_crop_max_height: 1536
+multi_crop_scale_threshold: 1.30
+sliding_crop_scale_threshold: 2.2
+spatial_crop_overlap: 0.25
+max_spatial_crops_per_clip: 5
+
+data_repeat: 1
+input_bits: 10
+
+# Return only training tensors by default. Visualization script overrides this.
+return_degradation_stages: false
+save_image_: false
+save_images_: false
+save_degradation_stages: false
+vis_output_dir: "data/test_samples/debug"
+vis_num_samples: 0
+vis_frame_indices: [0, 8, 16, 32, 42, 84]
+
+# GT augmentation: disabled for clean HQ target.
+random_gain_: false
+random_color_prob: 0
+usm_sharper_: false
+
+# Warp is not used for metadata mp4 samples.
+use_warp: false
+warp_prob: 0.0
+
+# Real-ESRGAN-style degradation flags.
+degradation_1: true
+degradation_2: true
+degradation_3: true
+
+# first degradation process
+kernel_list: ['iso', 'aniso', 'generalized_iso', 'generalized_aniso', 'plateau_iso', 'plateau_aniso']
+kernel_prob: [0.45, 0.25, 0.12, 0.03, 0.12, 0.03]
+blur_sigma: [0.2, 3]
+betag_range: [0.5, 4]
+betap_range: [1, 2]
+sinc_prob: 0.1
+
+resize_prob: [0.1, 0.2, 0.7]    # up, down, keep
+resize_range: [0.15, 1.5]
+gaussian_noise_prob: 0.5
+noise_range: [0.5, 20]
+poisson_scale_range: [0.015, 2]
+gray_noise_prob: 0.9
+
+# second degradation process
+kernel_list2: ['iso', 'aniso', 'generalized_iso', 'generalized_aniso', 'plateau_iso', 'plateau_aniso']
+kernel_prob2: [0.45, 0.25, 0.12, 0.03, 0.12, 0.03]
+blur_sigma2: [0.2, 1.5]
+betag_range2: [0.5, 4]
+betap_range2: [1, 2]
+sinc_prob2: 0.1
+
+second_blur_prob: 0.8
+resize_prob2: [0.3, 0.4, 0.3]   # up, down, keep
+resize_range2: [0.3, 1.2]
+gaussian_noise_prob2: 0.5
+noise_range2: [0.5, 20]
+poisson_scale_range2: [0.015, 2]
+gray_noise_prob2: 0.9
+
+# final sinc kernel
+final_sinc_prob: 0.3
