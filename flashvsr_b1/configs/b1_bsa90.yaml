@@ -1,0 +1,50 @@
+project: flashvsr_b1
+# 注:run_tag 直接由 config 文件 stem 推导(本文件名 b1_bsa90.yaml → stem=b1_bsa90),
+# 进入 log/<ts>_b1_bsa90/。不要在 yaml 内重复声明,避免双源不一致。
+
+attn_mode: BSA                            # ∈ {BSA, LSWA}
+target_sparsity: 0.90                     # BSA 用;LSWA 模式下 trainer 跳过 set_current_sparsity,字段忽略
+block_size: [2, 8, 8]
+window_size: [2, 21, 21]                  # LSWA 用
+distill_layers: [4, 9, 14, 19, 24, 29]
+
+teacher_ckpt: /path/to/flashvsr/v1.1_tiny.safetensors
+student_ckpt: /path/to/flashvsr/v1.1_tiny.safetensors
+tc_decoder_ckpt: /path/to/TCDecoder.ckpt
+lq_proj_ckpt: /path/to/LQ_proj_in.ckpt
+
+single_step_t: 999                        # one-step inference t
+
+train:
+  total_steps: 20000
+  warmup_steps: 2000
+  main_end_step: 15000
+  per_rank_batch: 1
+  grad_accum: 1
+  grad_clip: 1.0
+  lr_backbone: 1.0e-5
+  precision: bf16
+  optimizer: AdamW
+  betas: [0.9, 0.99]
+  wd: 0.0
+  dropout: 0.0
+  seed: 42
+  cudnn_benchmark: false
+
+data:
+  cfg: flashvsr_b1/configs/data_b1.yaml
+  buckets: [landscape, portrait]
+  num_workers: 8
+  prefetch_factor: 2
+
+eval:
+  val_json: /path/to/val_samples.json
+  every_steps: 1000
+  metrics: [psnr, ssim, lpips, dists, sparsity_rate, fps_720p, fps_1080p]
+
+logging:
+  log_root: log                           # log/<ts>_<config_stem>/
+  log_every_steps: 50
+  ckpt_every_steps: 2000
+  wandb_project: flashvsr_b1
+  ema_span: 100
