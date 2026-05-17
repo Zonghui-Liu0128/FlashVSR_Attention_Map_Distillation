@@ -437,13 +437,16 @@ def test_topk_for_clamps_to_one():
 @pytest.mark.skipif(not torch.cuda.is_available(),
                     reason="bsa_forward requires CUDA + block_sparse_attn lib")
 def test_bsa_forward_shape():
+    """Token-grid (T, H_lat, W_lat) MUST be divisible by block_size axis-wise.
+    With block_size (2, 8, 8), valid tiny grid is (4, 8, 8) → block grid (2,1,1)."""
     torch.manual_seed(0)
-    B, S, D, H = 1, 22*8*15, 128, 4    # tiny grid: T=22, h=8, w=15 → S=2640
+    B, T, H_lat, W_lat, D, H = 1, 4, 8, 8, 128, 4
+    S = T * H_lat * W_lat
     Q = torch.randn(B, S, D, device="cuda")
     K = torch.randn(B, S, D, device="cuda")
     V = torch.randn(B, S, D, device="cuda")
     out = bsa_forward(Q, K, V,
-                      block_size=(2,8,8), grid_shape=(22,8,15),
+                      block_size=(2,8,8), grid_shape=(T, H_lat, W_lat),
                       current_sparsity=0.85,
                       num_heads=H, local_window_mask=None)
     assert out.shape == (B, S, D)
@@ -452,9 +455,11 @@ def test_bsa_forward_shape():
                     reason="parity test requires CUDA")
 def test_bsa_parity_with_root_implementation():
     """
-    Build the same SelfAttention object from root wan_video_dit.py with topk
-    corresponding to 85% sparsity, run _block_sparse_forward, compare with
-    bsa_forward output (same Q/K/V, same seed, same block_size). atol=1e-4.
+    Build the same SelfAttention object from root wan_video_dit.py and call its
+    _block_sparse_forward with the FULL signature (q, k, v, B, f, h, w, D,
+    local_num, topk, kv_len, is_stream, pre_cache_k, pre_cache_v, local_range).
+    Compare against bsa_forward output. atol=1e-4. Token grid must be
+    divisible by block_size — use (T=22, H=16, W=16) → block grid (11,2,2).
     """
     # Codex implements; assertion: outputs match.
 ```

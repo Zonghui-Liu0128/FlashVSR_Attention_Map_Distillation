@@ -22,12 +22,13 @@ def test_topk_for_clamps_to_one():
                     reason="bsa_forward requires CUDA + block_sparse_attn lib")
 def test_bsa_forward_shape():
     torch.manual_seed(0)
-    B, S, D, H = 1, 22*8*15, 128, 4
+    B, T, H_lat, W_lat, D, H = 1, 4, 8, 8, 128, 4
+    S = T * H_lat * W_lat
     Q = torch.randn(B, S, D, device="cuda")
     K = torch.randn(B, S, D, device="cuda")
     V = torch.randn(B, S, D, device="cuda")
     out = bsa_forward(Q, K, V,
-                      block_size=(2,8,8), grid_shape=(22,8,15),
+                      block_size=(2,8,8), grid_shape=(T, H_lat, W_lat),
                       current_sparsity=0.85,
                       num_heads=H, local_window_mask=None)
     assert out.shape == (B, S, D)
@@ -49,7 +50,7 @@ def test_bsa_parity_with_root_implementation():
     spec.loader.exec_module(mod)
 
     torch.manual_seed(0)
-    B, f, h, w = 1, 22, 8, 15
+    B, f, h, w = 1, 22, 16, 16
     D = 96
     num_heads = 12
     Q = torch.randn(B, f*h*w, D, device="cuda")
@@ -59,12 +60,21 @@ def test_bsa_parity_with_root_implementation():
     sa = mod.SelfAttention(dim=D, num_heads=num_heads).eval().cuda()
     total_blocks = (f//2) * (h//8) * (w//8)
     topk = max(1, int(round(total_blocks * 0.15)))
+    local_range = 9
+    window_size = 2 * h * w // 128
+    seqlen = f // 2
+    # Reference forward derives kv_len from randomized kv_ratio; this direct
+    # no-cache parity path only needs a concrete int. Validate on B200.
+    kv_len = min(max(int(window_size * local_range), 1),
+                 int(window_size * seqlen) - 1)
 
     with torch.no_grad():
-        out_ref = sa._block_sparse_forward(
+        out_ref, _, _ = sa._block_sparse_forward(
             Q, K, V, B, f, h, w, D,
             local_num=0, topk=topk,
+            kv_len=kv_len,
             is_stream=False, pre_cache_k=None, pre_cache_v=None,
+            local_range=local_range,
         )
         out_ours = bsa_forward(Q, K, V,
                                 block_size=(2,8,8),

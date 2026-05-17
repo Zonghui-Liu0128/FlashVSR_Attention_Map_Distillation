@@ -77,3 +77,10 @@ tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation SKIPPED
 - The parity and shape tests are skipped on this macOS environment because CUDA is unavailable. Real kernel parity still needs to be exercised on the B200 environment with `block_sparse_attn` installed.
 - The current reference `generate_draft_block_mask` requires a non-`None` local window mask, while this task's public interface allows `local_window_mask=None`. The wrapper builds the same default shifted local mask used by `_block_sparse_forward` when no mask is supplied.
 - Staging could not be completed in this sandbox. `git add tests/test_bsa_kernel.py flashvsr_b1/attn/bsa_kernel.py flashvsr_b1/attn/__init__.py logs/20260517-task5-bsa-kernel.md` failed because Git could not create `.git/index.lock` (`Operation not permitted`). A direct `touch .git/index.lock` failed with the same error, so this appears to be an environment permission limitation rather than a stale lock.
+
+## Follow-up fix
+
+- Removed the `spatial_block_grid` fallback from `flashvsr_b1/attn/bsa_kernel.py`; BSA partitioning now uses dense grid semantics only and raises `ValueError` when any `grid_shape` axis is not divisible by the matching `block_size` axis.
+- Corrected the shape test grid to `(4, 8, 8)` and the parity test grid to `(22, 16, 16)`.
+- Parity test arguments were inferred from `wan_video_dit.py:493-545`: `_block_sparse_forward(..., kv_len, ..., local_range)`, with `local_range=9` from the reference default. The direct no-cache test uses a concrete `kv_len` derived from the reference cache-bound formula; B200-side validation may need to adjust `kv_len`/`local_range`.
+- New `flashvsr_b1/attn/bsa_kernel.py` line count: 194.
