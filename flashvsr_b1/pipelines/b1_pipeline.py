@@ -204,27 +204,74 @@ class B1Pipeline(WanVideoPipeline):
         return _module_device(self.dit)
 
     def prepare_batch(self, batch):
-        """Take a dataset batch and build the one-step B1 training tensors."""
+        """Build one-step B1 training tensors per upstream FlashVSR contract.
+
+        Returns:
+            LR_latents (list[Tensor]): per-block residual condition; one element
+                of shape (B, N_tok, cfg.dim=1536) token-last for layer_num=1.
+                Added inside DiT block loop, see wan_video_dit.py:862-864.
+            z_t (Tensor): noisy VAE-latent input of shape
+                (B, dit.in_dim=16, T_lat, H_lat, W_lat), pre-patchify. Patched
+                inside B1WanModel.forward.
+            t_star (Tensor): single-step diffusion timestep scalar.
+            hr_rgb (Tensor): ground-truth HR pixels for L_lpips.
+        """
         device = self.dit_device()
         lr_rgb = batch["lr"].to(device)
         hr_rgb = batch["hr"].to(device)
         self.lq_proj.to(device)
-        lr_latent = self.lq_proj(lr_rgb)
-        if lr_latent.ndim == 3:
-            latent_shape = batch.get("latent_shape", None)
-            if latent_shape is None:
-                raise ValueError("batch must include latent_shape when lq_proj returns flattened output")
-            if isinstance(latent_shape, torch.Tensor):
-                latent_shape = latent_shape.tolist()
-            if isinstance(latent_shape, (list, tuple)) and latent_shape and isinstance(latent_shape[0], (list, tuple)):
-                latent_shape = latent_shape[0]
-            t_lat, h_lat, w_lat = (int(v) for v in latent_shape)
-            b, c, n = lr_latent.shape
-            if n != t_lat * h_lat * w_lat:
-                raise ValueError(
-                    f"lq_proj token count {n} does not match latent_shape {(t_lat, h_lat, w_lat)}"
-                )
-            lr_latent = lr_latent.view(b, c, t_lat, h_lat, w_lat)
-        z_t = torch.randn_like(lr_latent)
-        t_star = torch.tensor(self.cfg_single_step_t, device=lr_latent.device)
-        return lr_latent, z_t, t_star, hr_rgb
+
+        # Step 1: project LR pixels to DiT-inner-dim tokens.
+        # Causal_LQ4x_Proj returns (B, 1536, N) for layer_num=1 or
+        # (B, 1536, layer_num, N) for layer_num>1. Normalize to upstream list contract.
+        lr_tokens = self.lq_proj(lr_rgb)
+        if lr_tokens.ndim == 3:
+            # layer_num=1: (B, 1536, N) -> list[(B, N, 1536)]
+            LR_latents = [lr_tokens.transpose(1, 2).contiguous()]
+        elif lr_tokens.ndim == 4:
+            # layer_num>1: (B, 1536, layer_num, N) -> list[(B, N, 1536)]
+            LR_latents = [
+                lr_tokens[:, :, i, :].transpose(1, 2).contiguous()
+                for i in range(lr_tokens.shape[2])
+            ]
+        else:
+            raise ValueError(
+                f"lq_proj returned unexpected ndim {lr_tokens.ndim} (shape "
+                f"{tuple(lr_tokens.shape)}); expected 3D or 4D - see "
+                f"Causal_LQ4x_Proj.forward in flashvsr_components.py:135-140"
+            )
+
+        # Step 2: build noisy 16-channel VAE-latent z_t at the pre-patch shape.
+        # batch["latent_shape"] is the POST-patch token grid (e.g. (22,64,120)
+        # for landscape) per dataset_b1.py:32 + Fix B clarification. Multiply by
+        # dit.patch_size to recover the pre-patch latent shape.
+        token_grid = batch.get("latent_shape", None)
+        if token_grid is None:
+            raise ValueError(
+                "prepare_batch requires batch['latent_shape'] (post-patch token grid)"
+            )
+        if isinstance(token_grid, torch.Tensor):
+            token_grid = token_grid.tolist()
+        if isinstance(token_grid, (list, tuple)) and token_grid and isinstance(token_grid[0], (list, tuple)):
+            token_grid = token_grid[0]
+        token_grid = tuple(int(v) for v in token_grid)
+
+        patch_size = tuple(int(p) for p in getattr(self.dit, "patch_size", (1, 2, 2)))
+        if len(patch_size) != 3 or len(token_grid) != 3:
+            raise ValueError(
+                f"patch_size and token_grid must both be 3-tuples; got "
+                f"patch_size={patch_size}, token_grid={token_grid}"
+            )
+        pre_patch_latent_shape = tuple(g * p for g, p in zip(token_grid, patch_size))
+
+        in_dim = int(getattr(self.dit, "in_dim", 16))
+        B = lr_rgb.shape[0]
+        dit_dtype = next((p.dtype for p in self.dit.parameters() if p is not None), lr_rgb.dtype)
+        z_t = torch.randn(
+            (B, in_dim, *pre_patch_latent_shape),
+            device=device,
+            dtype=dit_dtype,
+        )
+
+        t_star = torch.tensor(self.cfg_single_step_t, device=device)
+        return LR_latents, z_t, t_star, hr_rgb

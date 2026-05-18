@@ -55,7 +55,7 @@ def test_compute_loss_assembles_all_four_terms_for_bsa():
     # Mock prepare_batch and any helpers
     trainer.prepare_batch = MagicMock(
         return_value=(
-            torch.zeros(1, 8, 4),  # LR_latent
+            [torch.zeros(1, 8, 4)],  # LR_latents
             torch.zeros(1, 4, 4),  # z_t
             torch.tensor(999),  # t_star
             torch.zeros(1, 3, 64, 64),  # gt_hr
@@ -92,7 +92,7 @@ def test_compute_loss_skips_block_for_lswa():
 
     trainer.prepare_batch = MagicMock(
         return_value=(
-            torch.zeros(1, 8, 4),
+            [torch.zeros(1, 8, 4)],
             torch.zeros(1, 4, 4),
             torch.tensor(999),
             torch.zeros(1, 3, 64, 64),
@@ -139,7 +139,7 @@ def test_compute_loss_set_current_sparsity_called_for_bsa_only():
         trainer_bsa.lpips_net.return_value = torch.tensor(0.1)
         trainer_bsa.prepare_batch = MagicMock(
             return_value=(
-                torch.zeros(1, 8, 4),
+                [torch.zeros(1, 8, 4)],
                 torch.zeros(1, 4, 4),
                 torch.tensor(999),
                 torch.zeros(1, 3, 64, 64),
@@ -170,7 +170,7 @@ def test_compute_loss_set_current_sparsity_called_for_bsa_only():
         trainer_lswa.lpips_net.return_value = torch.tensor(0.1)
         trainer_lswa.prepare_batch = MagicMock(
             return_value=(
-                torch.zeros(1, 8, 4),
+                [torch.zeros(1, 8, 4)],
                 torch.zeros(1, 4, 4),
                 torch.tensor(999),
                 torch.zeros(1, 3, 64, 64),

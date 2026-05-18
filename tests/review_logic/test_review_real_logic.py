@@ -161,7 +161,7 @@ def test_C4_trainer_model_call_matches_B1WanModel_forward_signature():
     sig = inspect.signature(B1WanModel.b1_forward)
     params = list(sig.parameters.values())
     first_three = [p.name for p in params[1:4]]
-    assert first_three == ["LR_latent", "z_t", "t_star"], (
+    assert first_three == ["LR_latents", "z_t", "t_star"], (
         f"Unexpected B1WanModel.b1_forward first-three args: {first_three}"
     )
     trainer_src = (PROJECT_ROOT / "flashvsr_b1" / "train" / "trainer_b1.py").read_text()
@@ -374,8 +374,21 @@ def test_C10_compute_loss_end_to_end_smoke():
             self.attn_mode = "BSA"
             self.proj = nn.Linear(16, 16)
 
-        def b1_forward(self, LR_latent, z_t, t_star, return_aux=False):
-            return self.forward(LR_latent + z_t, t_star, None, return_aux=return_aux)
+        def b1_forward(self, LR_latents, z_t, t_star, return_aux=False):
+            out = self.proj(z_t)
+            if not return_aux:
+                return out
+            B, S, D = out.shape
+            num_heads = 4
+            N_blk = 8
+            aux = {
+                "h_out": {l: out for l in self.distill_layers},
+                "A_blk": {
+                    l: torch.softmax(torch.randn(B, num_heads, N_blk, N_blk), dim=-1)
+                    for l in self.distill_layers
+                },
+            }
+            return out, aux
 
         def forward(self, x, timestep, context, return_aux=False, **kwargs):
             out = self.proj(x)
@@ -417,11 +430,11 @@ def test_C10_compute_loss_end_to_end_smoke():
 
     # Honest prepare_batch: produces tensors with shapes a real trainer would face.
     def real_prepare_batch(batch):
-        x = torch.randn(1, 4, 16, requires_grad=False)
-        timestep = torch.tensor([999], dtype=torch.long)
-        context = torch.zeros(1, 8, 16)
+        LR_latents = [torch.randn(1, 4, 16)]
+        z_t = torch.randn(1, 4, 16, requires_grad=False)
+        t_star = torch.tensor([999], dtype=torch.long)
         gt = torch.zeros(1, 3, 16, 16)
-        return x, timestep, context, gt
+        return LR_latents, z_t, t_star, gt
     trainer.prepare_batch = real_prepare_batch
 
     L, ld = trainer.compute_loss({}, step=100)

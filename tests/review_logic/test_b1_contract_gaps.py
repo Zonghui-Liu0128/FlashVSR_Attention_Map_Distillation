@@ -23,8 +23,9 @@ def test_trainer_accepts_b1wanmodel_layer_aux_contract():
             self.current_sparsity = 0.85
             self.proj = nn.Linear(4, 4)
 
-        def b1_forward(self, LR_latent, z_t, t_star, return_aux=False):
-            out = self.proj(LR_latent + z_t)
+        def b1_forward(self, LR_latents, z_t, t_star, return_aux=False):
+            # Post-Fix-H: LR_latents is list[Tensor]; just consume z_t.
+            out = self.proj(z_t)
             if not return_aux:
                 return out
             attn = torch.full((1, 1, 2, 2), 0.5, dtype=out.dtype, device=out.device)
@@ -46,10 +47,11 @@ def test_trainer_accepts_b1wanmodel_layer_aux_contract():
     trainer.lpips_net = lambda pred, target: torch.zeros(1, dtype=pred.dtype, device=pred.device)
 
     def prepare_batch(batch):
-        LR_latent = torch.randn(1, 2, 4)
-        z_t = torch.randn_like(LR_latent)
+        # Post-Fix-H: prepare_batch returns LR_latents as list[Tensor].
+        z_t = torch.randn(1, 2, 4)
+        LR_latents = [torch.randn(1, z_t.shape[-1], 4)]  # list of (B, N, D)
         gt_hr = torch.zeros(1, 3, 4, 4)
-        return LR_latent, z_t, torch.tensor(999), gt_hr
+        return LR_latents, z_t, torch.tensor(999), gt_hr
 
     trainer.prepare_batch = prepare_batch
 
@@ -91,7 +93,9 @@ def test_bsa_block_size_is_compatible_with_flashvsr_patchified_grid():
 
 
 def test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding():
-    """prepare_batch should not feed C_lq=1536 tensors into a Wan DiT expecting 16 channels."""
+    """Post-Fix-H contract: prepare_batch returns z_t at dit.in_dim channels
+    (the patch_embedding's in_channels) and LR_latents as a list of token
+    tensors at dit.dim, matching upstream wan_video_dit.py:862-864."""
     from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
     from flashvsr_b1.pipelines.b1_pipeline import B1Pipeline
 
@@ -99,12 +103,14 @@ def test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding():
 
     class FakeLQProj(nn.Module):
         def forward(self, lr_rgb):
+            # Mirror Causal_LQ4x_Proj layer_num=1 output: (B, dim, N)
             return torch.zeros(lr_rgb.shape[0], cfg.dim, 1)
 
     class FakeDit(nn.Module):
         def __init__(self):
             super().__init__()
             self.in_dim = cfg.in_dim
+            self.patch_size = cfg.patch_size
 
     pipe = B1Pipeline.__new__(B1Pipeline)
     torch.nn.Module.__init__(pipe)
@@ -117,11 +123,31 @@ def test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding():
         "hr": torch.zeros(1, 3, 1, 16, 16),
         "latent_shape": (1, 1, 1),
     }
-    lr_latent, z_t, _, _ = B1Pipeline.prepare_batch(pipe, batch)
+    LR_latents, z_t, t_star, hr = B1Pipeline.prepare_batch(pipe, batch)
 
-    assert lr_latent.shape[1] == pipe.dit.in_dim, (
-        f"prepare_batch produced {lr_latent.shape[1]} channels and z_t {z_t.shape[1]} "
-        f"channels, but Wan patch_embedding expects in_dim={pipe.dit.in_dim}."
+    # z_t is the pre-patchify VAE-latent - must match patch_embedding.in_dim
+    assert z_t.shape[1] == pipe.dit.in_dim, (
+        f"z_t produced {z_t.shape[1]} channels, but Wan patch_embedding "
+        f"expects in_dim={pipe.dit.in_dim}"
+    )
+    # LR_latents is upstream's list-of-tokens contract
+    assert isinstance(LR_latents, list), (
+        f"LR_latents must be list[Tensor] per upstream contract; "
+        f"got {type(LR_latents).__name__}"
+    )
+    assert len(LR_latents) >= 1
+    for i, lr_tok in enumerate(LR_latents):
+        assert lr_tok.ndim == 3, (
+            f"LR_latents[{i}] must be 3D token tensor (B, N, dim); "
+            f"got shape {tuple(lr_tok.shape)}"
+        )
+        assert lr_tok.shape[-1] == cfg.dim, (
+            f"LR_latents[{i}] token dim {lr_tok.shape[-1]} != cfg.dim={cfg.dim}"
+        )
+    # z_t pre-patch latent shape = post-patch token grid x patch_size
+    expected_pre_patch = tuple(g * p for g, p in zip(batch["latent_shape"], cfg.patch_size))
+    assert z_t.shape[2:] == expected_pre_patch, (
+        f"z_t spatial shape {z_t.shape[2:]} != expected {expected_pre_patch}"
     )
 
 

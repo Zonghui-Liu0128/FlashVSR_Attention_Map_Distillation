@@ -241,11 +241,28 @@ class B1WanModel(wan_video_dit.WanModel):
     def _init_distill_layers_for_test(self):
         self.distill_layers = set(_DEFAULT_DISTILL_LAYERS)
 
-    def b1_forward(self, LR_latent, z_t, t_star, return_aux: bool = False):
-        """B1 one-step forward with LR latent conditioning and fixed timestep."""
+    def b1_forward(self, LR_latents, z_t, t_star, return_aux: bool = False):
+        """B1 one-step forward matching upstream FlashVSR contract.
+
+        Args:
+            LR_latents: list[Tensor], one element per conditioned DiT block,
+                each shape (B, N, dim=1536) token-last. Injected as per-block
+                additive residual at DiT inner dim - see B1WanModel.forward and
+                wan_video_dit.py:862-864.
+            z_t: noisy 5D VAE-latent of shape (B, in_dim=16, T_lat, H_lat, W_lat).
+                Patchified inside forward.
+            t_star: single-step diffusion timestep (scalar or 1D).
+            return_aux: thread to forward.
+        """
+        if not isinstance(LR_latents, (list, tuple)):
+            raise ValueError(
+                f"b1_forward expects LR_latents as list[Tensor] per "
+                f"upstream contract (wan_video_dit.py:862-864); got "
+                f"{type(LR_latents).__name__}"
+            )
+        LR_latents = list(LR_latents)
         B = z_t.shape[0]
         device = z_t.device
-        x = z_t + LR_latent
         if not torch.is_tensor(t_star):
             t_star = torch.tensor(t_star, device=device)
         if t_star.ndim == 0:
@@ -253,11 +270,12 @@ class B1WanModel(wan_video_dit.WanModel):
         else:
             timestep = t_star.to(device)
         text_ctx_dim = getattr(self, "text_dim", 4096)
-        context = torch.zeros(B, 1, text_ctx_dim, device=device, dtype=x.dtype)
+        context = torch.zeros(B, 1, text_ctx_dim, device=device, dtype=z_t.dtype)
         return self.forward(
-            x,
+            z_t,
             timestep,
             context,
+            LQ_latents=LR_latents,
             return_aux=return_aux,
         )
 
@@ -325,6 +343,7 @@ class B1WanModel(wan_video_dit.WanModel):
         y: torch.Tensor | None = None,
         use_gradient_checkpointing: bool = False,
         use_gradient_checkpointing_offload: bool = False,
+        LQ_latents: list[torch.Tensor] | None = None,
         return_aux: bool = False,
         **kwargs,
     ):
@@ -352,6 +371,11 @@ class B1WanModel(wan_video_dit.WanModel):
 
         layer_aux: dict[str, dict[int, torch.Tensor]] = {}
         for layer_idx, block in enumerate(self.blocks):
+            # Per upstream wan_video_dit.py:862-864 - LR conditioning is a per-block
+            # additive residual at DiT inner dim 1536, added before sublayer ops.
+            if LQ_latents is not None and layer_idx < len(LQ_latents):
+                x = x + LQ_latents[layer_idx]
+
             x, aux = self._forward_block_b1(
                 block,
                 x,
