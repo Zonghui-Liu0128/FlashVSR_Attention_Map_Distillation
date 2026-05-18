@@ -56,17 +56,34 @@ def test_trainer_accepts_b1wanmodel_layer_aux_contract():
 
 
 def test_bsa_block_size_is_compatible_with_flashvsr_patchified_grid():
-    """The spec's block_size=(2,8,8) must divide the actual token grid used by BSA."""
+    """The spec's (22,64,120) is already the POST-patch token grid that BSA
+    operates on (task_b1.md §2 line 113: LR_latent = [B, C_lq, 22, 64, 120];
+    line 310: N_blk = (22/2)*(64/8)*(120/8) = 1320). Cross-check that
+    block_size divides this grid directly — DO NOT divide by patch_size again,
+    that would double-patchify.
+
+    Also sanity-check that the pre-patch VAE latent shape implied by the spec
+    cfg.patch_size matches HR 1024x1920 / VAE-8x = (?, 128, 240)."""
     from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
 
-    latent_grid = (22, 64, 120)
-    patch_size = FlashVSRTinyConfig.default().patch_size
-    token_grid = tuple(size // patch for size, patch in zip(latent_grid, patch_size))
+    cfg = FlashVSRTinyConfig.default()
+    bsa_grid = (22, 64, 120)            # post-patch token grid, BSA's view
     block_size = (2, 8, 8)
 
-    assert all(size % block == 0 for size, block in zip(token_grid, block_size)), (
-        f"BSA sees token_grid={token_grid} after patch_size={patch_size}, "
-        f"which is incompatible with block_size={block_size}."
+    # The actual contract: block_size must divide the BSA grid.
+    assert all(g % b == 0 for g, b in zip(bsa_grid, block_size)), (
+        f"BSA grid {bsa_grid} not divisible by block_size {block_size}"
+    )
+
+    # Sanity: block count matches task_b1.md §3 (1320 blocks).
+    block_count = (bsa_grid[0] // block_size[0]) * (bsa_grid[1] // block_size[1]) * (bsa_grid[2] // block_size[2])
+    assert block_count == 1320, f"block count {block_count} != spec 1320"
+
+    # Sanity: the pre-patch VAE latent shape implied by cfg.patch_size lines up
+    # with HR 1024x1920 at VAE-8x downsample (=> latent H/W = 128/240).
+    pre_patch_latent = tuple(g * p for g, p in zip(bsa_grid, cfg.patch_size))
+    assert pre_patch_latent == (22, 128, 240), (
+        f"pre-patch latent {pre_patch_latent} != spec (22, 128, 240) for HR 1024x1920"
     )
 
 

@@ -187,8 +187,10 @@ def test_C5_bsa_partition_fails_on_patchified_grid():
 
 
 def test_C5b_bsa_partition_succeeds_on_latent_grid():
-    """Spec's chosen block_size only works if grid_shape is the LATENT grid
-    (no patchify), i.e., effectively patch_size=(1,1,1) inside WanModel."""
+    """Spec's chosen block_size (2,8,8) divides the post-patch token grid
+    (22, 64, 120) that BSA operates on. This is the same grid task_b1.md
+    line 113/310 refers to as `T_lat, H_lat, W_lat` — already after Wan's
+    patch_embed with patch_size=(1,2,2)."""
     from flashvsr_b1.attn.bsa_kernel import _partition_for_bsa
     x = torch.zeros(1, 22 * 64 * 120, 8)
     out = _partition_for_bsa(x, block_size=(2, 8, 8), grid_shape=(22, 64, 120))
@@ -498,8 +500,10 @@ def test_C12_bucket_sampler_strict_same_bucket_per_batch():
 # ---------------------------------------------------------------------------
 
 def test_C13_metrics_logger_seqlen_constant_matches_spec_latent_grid():
-    """spec §7.2 SEQLEN_PER_VIDEO = 22 * 64 * 120 = 168960. This is the LATENT
-    grid, not the patchified token count. Pin the value and flag any change."""
+    """spec §7.2 SEQLEN_PER_VIDEO = 22 * 64 * 120 = 168960. This is the
+    post-patch token grid BSA sees (task_b1.md line 113/310), NOT the
+    pre-patch VAE latent (which would be 22*128*240). If a future change
+    accidentally drops a patch_size factor anywhere, this constant flags it."""
     from flashvsr_b1.train.metrics_logger import MetricsLogger
     assert MetricsLogger.SEQLEN_PER_VIDEO == 22 * 64 * 120 == 168960, (
         "If grid_shape ends up being patchified, throughput will be wrong by patch volume."
