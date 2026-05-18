@@ -44,24 +44,53 @@ def test_C1_trainer_module_has_runnable_entrypoint():
 
 def test_C1b_trainer_module_actually_runs_something_when_invoked_as_main():
     """End-to-end: launch the smoke-style invocation and assert it does NOT
-    silently succeed without any side-effect. Failure mode: exit 0 with empty stdout."""
+    silently succeed without any side-effect.
+
+    Two failure modes we want to catch:
+      (a) Exit 0 with empty stdout/stderr — the original "empty stub" smoke.
+      (b) Timeout with empty stdout AND empty stderr — silent hang at startup.
+
+    On rigs with real checkpoints (B200), model loading legitimately exceeds
+    30s before the train loop is reached. A timeout WITH partial output is
+    therefore PASS evidence — the trainer is actively loading models. We only
+    fail when there is no output of any kind, which would indicate the
+    process is stuck without doing observable work."""
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{PROJECT_ROOT}:{env.get('PYTHONPATH', '')}"
-    completed = subprocess.run(
-        [sys.executable, "-m", "flashvsr_b1.train.trainer_b1",
-         "--config", "flashvsr_b1/configs/b1_bsa90.yaml"],
-        cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True, timeout=30,
-    )
-    # If the module DOES define a main, it would error out fast on missing checkpoints
-    # (which is acceptable). Silent exit 0 with no output is the failure mode we want
-    # to catch.
-    silent_success = (completed.returncode == 0
-                      and not completed.stdout.strip()
-                      and not completed.stderr.strip())
-    assert not silent_success, (
-        "Running `-m flashvsr_b1.train.trainer_b1 --config ...` exited 0 with no output. "
-        "This is the silent-no-op failure mode described in the deployment guide."
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-m", "flashvsr_b1.train.trainer_b1",
+             "--config", "flashvsr_b1/configs/b1_bsa90.yaml"],
+            cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True, timeout=30,
+        )
+        # Completed within timeout (typical of CPU dev rigs that error out fast
+        # on missing checkpoints). Silent exit 0 with no output is the bug.
+        silent_success = (completed.returncode == 0
+                          and not completed.stdout.strip()
+                          and not completed.stderr.strip())
+        assert not silent_success, (
+            "Running `-m flashvsr_b1.train.trainer_b1 --config ...` exited 0 with no output. "
+            "This is the silent-no-op failure mode described in the deployment guide."
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Timed out — proof of activity is partial stdout or stderr. The trainer
+        # legitimately spends >30s loading FlashVSR-v1.1 / VAE / LPIPS on B200,
+        # so this branch is the common case there and is expected.
+        def _decode(buf):
+            if buf is None:
+                return ""
+            if isinstance(buf, bytes):
+                return buf.decode("utf-8", errors="replace")
+            return str(buf)
+
+        partial_stdout = _decode(exc.stdout).strip()
+        partial_stderr = _decode(exc.stderr).strip()
+        assert partial_stdout or partial_stderr, (
+            "trainer subprocess timed out after 30s with NO stdout AND NO stderr. "
+            "Trainer appears to be silently hanging at startup (no model load "
+            "messages, no errors). This is the no-observable-side-effect failure "
+            "mode and is treated as failure here."
+        )
 
 
 # ---------------------------------------------------------------------------
