@@ -1,410 +1,64 @@
+============================================================================= FAILURES ==============================================================================
+_______________________________________________ test_C1b_trainer_module_actually_runs_something_when_invoked_as_main ________________________________________________
 
-======================================================================
-[FAILED TEST SCRIPT] tests/review_logic/test_b1_contract_gaps.py
-[COMMAND] python -m pytest tests/review_logic/test_b1_contract_gaps.py -v
-[EXIT CODE] 1
-======================================================================
-============================= test session starts ==============================
-platform linux -- Python 3.11.14, pytest-9.0.3, pluggy-1.6.0 -- /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/bin/python
-cachedir: .pytest_cache
-rootdir: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation
-configfile: pytest.ini
-plugins: anyio-4.13.0
-collecting ... collected 4 items
-
-tests/review_logic/test_b1_contract_gaps.py::test_trainer_accepts_b1wanmodel_layer_aux_contract PASSED [ 25%]
-tests/review_logic/test_b1_contract_gaps.py::test_bsa_block_size_is_compatible_with_flashvsr_patchified_grid PASSED [ 50%]
-tests/review_logic/test_b1_contract_gaps.py::test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding FAILED [ 75%]
-tests/review_logic/test_b1_contract_gaps.py::test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks PASSED [100%]
-
-=================================== FAILURES ===================================
-_____ test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding ______
-
-    def test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding():
-        """prepare_batch should not feed C_lq=1536 tensors into a Wan DiT expecting 16 channels."""
-        from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
-        from flashvsr_b1.pipelines.b1_pipeline import B1Pipeline
-    
-        cfg = FlashVSRTinyConfig.default()
-    
-        class FakeLQProj(nn.Module):
-            def forward(self, lr_rgb):
-                return torch.zeros(lr_rgb.shape[0], cfg.dim, 1)
-    
-        class FakeDit(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.in_dim = cfg.in_dim
-    
-        pipe = B1Pipeline.__new__(B1Pipeline)
-        torch.nn.Module.__init__(pipe)
-        pipe.dit = FakeDit()
-        pipe.lq_proj = FakeLQProj()
-        pipe.cfg_single_step_t = 999
-    
-        batch = {
-            "lr": torch.zeros(1, 3, 1, 16, 16),
-            "hr": torch.zeros(1, 3, 1, 16, 16),
-            "latent_shape": (1, 1, 1),
-        }
-        lr_latent, z_t, _, _ = B1Pipeline.prepare_batch(pipe, batch)
-    
->       assert lr_latent.shape[1] == pipe.dit.in_dim, (
-            f"prepare_batch produced {lr_latent.shape[1]} channels and z_t {z_t.shape[1]} "
-            f"channels, but Wan patch_embedding expects in_dim={pipe.dit.in_dim}."
+    def test_C1b_trainer_module_actually_runs_something_when_invoked_as_main():
+        """End-to-end: launch the smoke-style invocation and assert it does NOT
+        silently succeed without any side-effect. Failure mode: exit 0 with empty stdout."""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{PROJECT_ROOT}:{env.get('PYTHONPATH', '')}"
+>       completed = subprocess.run(
+            [sys.executable, "-m", "flashvsr_b1.train.trainer_b1",
+             "--config", "flashvsr_b1/configs/b1_bsa90.yaml"],
+            cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True, timeout=30,
         )
-E       AssertionError: prepare_batch produced 1536 channels and z_t 1536 channels, but Wan patch_embedding expects in_dim=16.
-E       assert 1536 == 16
-E        +  where 16 = FakeDit().in_dim
-E        +    where FakeDit() = B1Pipeline(\n  (dit): FakeDit()\n  (lq_proj): FakeLQProj()\n).dit
 
-tests/review_logic/test_b1_contract_gaps.py:122: AssertionError
-=============================== warnings summary ===============================
-tests/review_logic/test_b1_contract_gaps.py::test_trainer_accepts_b1wanmodel_layer_aux_contract
+tests/review_logic/test_review_real_logic.py:50: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../condaenv/flashvsr_b200/lib/python3.11/subprocess.py:550: in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../condaenv/flashvsr_b200/lib/python3.11/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../condaenv/flashvsr_b200/lib/python3.11/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: -9 args: ['/srv/workspace/Kirin_AI_Workspace/TMG_I/l0083...>, endtime = 3048917.772438507, orig_timeout = 30
+stdout_seq = [b'Loading models from: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1/diffusion_...kages/lpips/weights/v0.1/vgg.pth\n', b'[BasicVSRDataset_hw_crop] Number of metadata samples: 18854; repeated: 18854\n']
+stderr_seq = [b"/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torchvision/m...T1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.\n  warnings.warn(msg)\n"]
+skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() > endtime:
+>           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/bin/python', '-m', 'flashvsr_b1.train.trainer_b1', '--config', 'flashvsr_b1/configs/b1_bsa90.yaml']' timed out after 30 seconds
+
+../../condaenv/flashvsr_b200/lib/python3.11/subprocess.py:1253: TimeoutExpired
+========================================================================= warnings summary ==========================================================================
+<frozen importlib._bootstrap>:241
   <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
 
-tests/review_logic/test_b1_contract_gaps.py::test_trainer_accepts_b1wanmodel_layer_aux_contract
+<frozen importlib._bootstrap>:241
   <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
 
+tests/test_losses.py::test_L_lpips_shape
+  /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+    warnings.warn(
+
+tests/test_losses.py::test_L_lpips_shape
+  /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+    warnings.warn(msg)
+
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-=========================== short test summary info ============================
-FAILED tests/review_logic/test_b1_contract_gaps.py::test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding
-=================== 1 failed, 3 passed, 2 warnings in 11.89s ===================
+====================================================================== short test summary info ======================================================================
+FAILED tests/review_logic/test_review_real_logic.py::test_C1b_trainer_module_actually_runs_something_when_invoked_as_main - subprocess.TimeoutExpired: Command '['/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/bin/python', '-m', 'flashvsr_b1.train.trainer_b1'...
+======================================================== 1 failed, 90 passed, 4 warnings in 69.00s (0:01:08) ========================================================
 sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
-
-
-======================================================================
-[FAILED TEST SCRIPT] tests/test_bsa_kernel.py
-[COMMAND] python -m pytest tests/test_bsa_kernel.py -v
-[EXIT CODE] 1
-======================================================================
-============================= test session starts ==============================
-platform linux -- Python 3.11.14, pytest-9.0.3, pluggy-1.6.0 -- /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/bin/python
-cachedir: .pytest_cache
-rootdir: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation
-configfile: pytest.ini
-plugins: anyio-4.13.0
-collecting ... collected 6 items
-
-tests/test_bsa_kernel.py::test_topk_for_85pct PASSED                     [ 16%]
-tests/test_bsa_kernel.py::test_topk_for_90pct PASSED                     [ 33%]
-tests/test_bsa_kernel.py::test_topk_for_95pct PASSED                     [ 50%]
-tests/test_bsa_kernel.py::test_topk_for_clamps_to_one PASSED             [ 66%]
-tests/test_bsa_kernel.py::test_bsa_forward_shape FAILED                  [ 83%]
-tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation FAILED [100%]
-
-=================================== FAILURES ===================================
-____________________________ test_bsa_forward_shape ____________________________
-
-    @pytest.mark.skipif(not torch.cuda.is_available(),
-                        reason="bsa_forward requires CUDA + block_sparse_attn lib")
-    def test_bsa_forward_shape():
-        torch.manual_seed(0)
-        B, T, H_lat, W_lat, D, H = 1, 4, 8, 8, 128, 4
-        S = T * H_lat * W_lat
-        Q = torch.randn(B, S, D, device="cuda")
-        K = torch.randn(B, S, D, device="cuda")
-        V = torch.randn(B, S, D, device="cuda")
->       out = bsa_forward(Q, K, V,
-                          block_size=(2,8,8), grid_shape=(T, H_lat, W_lat),
-                          current_sparsity=0.85,
-                          num_heads=H, local_window_mask=None)
-
-tests/test_bsa_kernel.py:30: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-flashvsr_b1/attn/bsa_kernel.py:204: in bsa_forward
-    out = _block_sparse_attention(
-flashvsr_b1/attn/bsa_kernel.py:110: in _block_sparse_attention
-    x = block_sparse_attn_func(
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/block_sparse_attn/block_sparse_attn_interface.py:471: in block_sparse_attn_func
-    return BlockSparseAttnFunc.apply(
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/autograd/function.py:596: in apply
-    return super().apply(*args, **kwargs)  # type: ignore[misc]
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/block_sparse_attn/block_sparse_attn_interface.py:368: in forward
-    out, softmax_lse, S_dmask, rng_state = _wrapped_block_sparse_attn_forward(
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_ops.py:1269: in __call__
-    return self._op(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/autograd.py:112: in autograd_impl
-    result = forward_no_grad(*args, Metadata(keyset, keyword_only_args))
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/autograd.py:41: in forward_no_grad
-    result = op.redispatch(keyset & _C._after_autograd_keyset, *args, **kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_ops.py:872: in redispatch
-    return self._handle.redispatch_boxed(keyset, *args, **kwargs)  # type: ignore[return-value]
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/custom_ops.py:347: in backend_impl
-    result = self._backend_fns[device_type](*args, **kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_compile.py:54: in inner
-    return disable_fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py:1263: in _fn
-    return fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/custom_ops.py:382: in wrapped_fn
-    return fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-q = tensor([[[-0.9247, -0.4253, -2.6438,  ..., -0.8373,  1.3506, -0.2879],
-         [-0.5965, -0.3283, -0.9086,  ...,  0.1...72, -1.5022, -0.1291],
-         [-0.3980,  0.3411, -2.1919,  ..., -0.5449, -1.9702,  0.7878]]],
-       device='cuda:0')
-k = tensor([[[ 0.1808, -0.5523,  0.9238,  ...,  0.5386,  1.8525,  0.2928],
-         [-0.2484, -0.5616,  3.0269,  ...,  0.7...76, -0.2999,  1.1355],
-         [ 0.3710,  0.5143, -0.8350,  ...,  0.9424,  0.1048,  0.7980]]],
-       device='cuda:0')
-v = tensor([[[ 2.5441, -0.7163, -0.4934,  ..., -0.6290, -0.6587,  2.0811],
-         [ 1.4151, -0.3091, -0.2055,  ...,  1.6...64, -1.4647,  0.4656],
-         [-0.9477,  0.4679,  0.8703,  ..., -0.2839,  2.8036,  0.5738]]],
-       device='cuda:0')
-cu_seqlens_q = tensor([  0, 256], device='cuda:0', dtype=torch.int32)
-cu_seqlens_k = tensor([  0, 256], device='cuda:0', dtype=torch.int32)
-m_block_dim = 128, n_block_dim = 128
-head_mask_type = tensor([1, 2, 3, 4], device='cuda:0', dtype=torch.int32)
-streaming_info = None
-row_blockmask = tensor([[[[-1, -1],
-          [ 0, -1]],
-
-         [[-1, -1],
-          [ 0, -1]],
-
-         [[-1, -1],
-          [ 0, -1]],
-
-         [[-1, -1],
-          [ 0, -1]]]], device='cuda:0', dtype=torch.int32)
-max_seqlen_q_ = 256, max_seqlen_k_ = 256, p_dropout = 0.0
-softmax_scale = 0.1767766952966369, is_causal = False, exact_streaming = False
-return_softmax = False, window_size_left = -1, window_size_right = -1
-
-    @_torch_custom_op_wrapper("flash_attn::_block_sparse_attn_forward", mutates_args=(), device_types="cuda")
-    def _block_sparse_attn_forward(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        cu_seqlens_q: torch.Tensor,
-        cu_seqlens_k: torch.Tensor,
-        m_block_dim: int,
-        n_block_dim: int,
-        head_mask_type: torch.Tensor,
-        streaming_info: torch.Tensor,
-        row_blockmask: Optional[torch.Tensor],
-        max_seqlen_q_: int,
-        max_seqlen_k_: int,
-        p_dropout: float,
-        softmax_scale: float,
-        is_causal: bool,
-        exact_streaming: bool,
-        return_softmax: bool,
-        window_size_left: int,
-        window_size_right: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
->       out, softmax_lse, S_dmask, rng_state = block_sparse_attn_cuda.fwd_block(
-            q, k, v,
-            cu_seqlens_q, cu_seqlens_k,
-            head_mask_type,
-            streaming_info,
-            row_blockmask,
-            max_seqlen_q_, max_seqlen_k_,
-            p_dropout,
-            softmax_scale,
-            is_causal,
-            window_size_left,
-            window_size_right,
-            m_block_dim, n_block_dim,
-            exact_streaming,
-            return_softmax,
-            None
-        )
-E       RuntimeError: BlockSparseAttention only support fp16 and bf16 data type
-
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/block_sparse_attn/block_sparse_attn_interface.py:169: RuntimeError
-___________________ test_bsa_parity_with_root_implementation ___________________
-
-    @pytest.mark.skipif(not torch.cuda.is_available(),
-                        reason="parity test requires CUDA")
-    def test_bsa_parity_with_root_implementation():
-        """
-        Build the same SelfAttention object from root wan_video_dit.py with topk
-        corresponding to 85% sparsity, run _block_sparse_forward, compare with
-        bsa_forward output (same Q/K/V, same seed, same block_size). atol=1e-4.
-        """
-        import importlib.util, sys, types
-        from pathlib import Path
-        REF_PATH = Path(__file__).resolve().parents[1] / "wan_video_dit.py"
-        if not REF_PATH.exists():
-            pytest.skip(f"wan_video_dit.py reference not present at {REF_PATH}")
-        spec = importlib.util.spec_from_file_location("ref_wan_video_dit", REF_PATH)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules.setdefault("ref_wan_video_dit", mod)
-        # wan_video_dit.py has `from .utils import hash_state_dict_keys` and falls
-        # back to `from utils import hash_state_dict_keys` outside a package; we
-        # only need the import to succeed, so stub it (same pattern as test_lswa.py).
-        old_utils = sys.modules.get("utils")
-        shim = types.ModuleType("utils")
-        shim.hash_state_dict_keys = lambda state_dict: state_dict
-        sys.modules["utils"] = shim
-        try:
-            spec.loader.exec_module(mod)
-        finally:
-            if old_utils is None:
-                sys.modules.pop("utils", None)
-            else:
-                sys.modules["utils"] = old_utils
-    
-        torch.manual_seed(0)
-        B, f, h, w = 1, 22, 16, 16
-        D = 96
-        num_heads = 12
-        Q = torch.randn(B, f*h*w, D, device="cuda")
-        K = torch.randn(B, f*h*w, D, device="cuda")
-        V = torch.randn(B, f*h*w, D, device="cuda")
-    
-        sa = mod.SelfAttention(dim=D, num_heads=num_heads).eval().cuda()
-        total_blocks = (f//2) * (h//8) * (w//8)
-        topk = max(1, int(round(total_blocks * 0.15)))
-        local_range = 9
-        window_size = 2 * h * w // 128
-        seqlen = f // 2
-        # Reference forward derives kv_len from randomized kv_ratio; this direct
-        # no-cache parity path only needs a concrete int. Validate on B200.
-        kv_len = min(max(int(window_size * local_range), 1),
-                     int(window_size * seqlen) - 1)
-    
-        with torch.no_grad():
->           out_ref = sa._block_sparse_forward(
-                Q, K, V, B, f, h, w, D,
-                local_num=0, topk=topk,
-                kv_len=kv_len,
-                is_stream=False, pre_cache_k=None, pre_cache_v=None,
-                local_range=local_range,
-            )
-
-tests/test_bsa_kernel.py:88: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-wan_video_dit.py:527: in _block_sparse_forward
-    x = self.attn(reorder_q, reorder_k, reorder_v, attention_mask)
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py:1779: in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py:1790: in _call_impl
-    return forward_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-wan_video_dit.py:309: in forward
-    x = flash_attention(q=q, k=k, v=v, num_heads=self.num_heads, attention_mask=attention_mask)
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-wan_video_dit.py:202: in flash_attention
-    x = block_sparse_attn_func(
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/block_sparse_attn/block_sparse_attn_interface.py:471: in block_sparse_attn_func
-    return BlockSparseAttnFunc.apply(
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/autograd/function.py:596: in apply
-    return super().apply(*args, **kwargs)  # type: ignore[misc]
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/block_sparse_attn/block_sparse_attn_interface.py:368: in forward
-    out, softmax_lse, S_dmask, rng_state = _wrapped_block_sparse_attn_forward(
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_ops.py:1269: in __call__
-    return self._op(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/autograd.py:112: in autograd_impl
-    result = forward_no_grad(*args, Metadata(keyset, keyword_only_args))
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/autograd.py:41: in forward_no_grad
-    result = op.redispatch(keyset & _C._after_autograd_keyset, *args, **kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_ops.py:872: in redispatch
-    return self._handle.redispatch_boxed(keyset, *args, **kwargs)  # type: ignore[return-value]
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/custom_ops.py:347: in backend_impl
-    result = self._backend_fns[device_type](*args, **kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_compile.py:54: in inner
-    return disable_fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py:1263: in _fn
-    return fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_library/custom_ops.py:382: in wrapped_fn
-    return fn(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-q = tensor([[[-9.2466e-01, -4.2534e-01, -2.6438e+00,  ..., -5.7973e-01,
-          -6.2285e-01, -3.2839e-01],
-         [-1....     [ 7.8439e-01, -1.7739e+00,  3.1835e-01,  ...,  5.7696e-01,
-          -4.1620e-01, -2.1483e+00]]], device='cuda:0')
-k = tensor([[[ 0.1808, -0.5523,  0.9238,  ...,  0.8676,  0.1297, -0.9406],
-         [ 0.8109,  0.8821, -1.0133,  ...,  0.4...07,  0.0225, -0.5634],
-         [ 0.6995, -2.2528, -1.8823,  ..., -0.2485,  0.5938,  0.8297]]],
-       device='cuda:0')
-v = tensor([[[ 2.5441e+00, -7.1635e-01, -4.9337e-01,  ..., -4.0353e-01,
-           9.0226e-01,  8.0993e-01],
-         [-6....     [-1.0598e+00, -9.3947e-01,  2.1815e+00,  ...,  9.0305e-01,
-          -7.6365e-02,  4.5381e-01]]], device='cuda:0')
-cu_seqlens_q = tensor([   0, 5632], device='cuda:0', dtype=torch.int32)
-cu_seqlens_k = tensor([   0, 5632], device='cuda:0', dtype=torch.int32)
-m_block_dim = 128, n_block_dim = 128
-head_mask_type = tensor([ 1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12], device='cuda:0',
-       dtype=torch.int32)
-streaming_info = None
-row_blockmask = tensor([[[[-1, -1, -1,  ..., -1, -1, -1],
-          [40, 37,  8,  ..., -1, -1, -1],
-          [-1, -1, -1,  ..., -1, -...[-1, -1, -1,  ..., -1, -1, -1],
-          [ 4, -1, -1,  ..., -1, -1, -1]]]], device='cuda:0',
-       dtype=torch.int32)
-max_seqlen_q_ = 5632, max_seqlen_k_ = 5632, p_dropout = 0.0
-softmax_scale = 0.3535533905932738, is_causal = False, exact_streaming = False
-return_softmax = False, window_size_left = -1, window_size_right = -1
-
-    @_torch_custom_op_wrapper("flash_attn::_block_sparse_attn_forward", mutates_args=(), device_types="cuda")
-    def _block_sparse_attn_forward(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        cu_seqlens_q: torch.Tensor,
-        cu_seqlens_k: torch.Tensor,
-        m_block_dim: int,
-        n_block_dim: int,
-        head_mask_type: torch.Tensor,
-        streaming_info: torch.Tensor,
-        row_blockmask: Optional[torch.Tensor],
-        max_seqlen_q_: int,
-        max_seqlen_k_: int,
-        p_dropout: float,
-        softmax_scale: float,
-        is_causal: bool,
-        exact_streaming: bool,
-        return_softmax: bool,
-        window_size_left: int,
-        window_size_right: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
->       out, softmax_lse, S_dmask, rng_state = block_sparse_attn_cuda.fwd_block(
-            q, k, v,
-            cu_seqlens_q, cu_seqlens_k,
-            head_mask_type,
-            streaming_info,
-            row_blockmask,
-            max_seqlen_q_, max_seqlen_k_,
-            p_dropout,
-            softmax_scale,
-            is_causal,
-            window_size_left,
-            window_size_right,
-            m_block_dim, n_block_dim,
-            exact_streaming,
-            return_softmax,
-            None
-        )
-E       RuntimeError: BlockSparseAttention only support fp16 and bf16 data type
-
-../../condaenv/flashvsr_b200/lib/python3.11/site-packages/block_sparse_attn/block_sparse_attn_interface.py:169: RuntimeError
-=========================== short test summary info ============================
-FAILED tests/test_bsa_kernel.py::test_bsa_forward_shape - RuntimeError: Block...
-FAILED tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation - R...
-========================= 2 failed, 4 passed in 5.88s ==========================
