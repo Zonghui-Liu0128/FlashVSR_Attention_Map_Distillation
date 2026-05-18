@@ -1,6 +1,11 @@
+运行bash scripts/10_smoke_one_step.sh flashvsr_b1/configs/b1_bsa90.yaml有报错：
 /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
   warnings.warn(
 /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
   warnings.warn(msg)
 Loading model from: /srv/workspace/p_kepom/.local/lib/python3.11/site-packages/lpips/weights/v0.1/vgg.pth
 [BasicVSRDataset_hw_crop] Number of metadata samples: 18854; repeated: 18854
+
+运行bash scripts/20a_train_b1_bsa90.sh有报错：
+(flashvsr_b200) p_kepom@sh-qingpu-a04-25-01:/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation$ bash scripts/20a_train_b1_bsa90.sh 
+scripts/20a_train_b1_bsa90.sh: line 9: NPROC_PER_NODE: unbound variable
