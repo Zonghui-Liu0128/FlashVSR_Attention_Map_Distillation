@@ -227,15 +227,33 @@ def _load_root_wan_video_dit():
     """Reference `wan_video_dit.py` at repo root has its own SelfAttention.
     Loading it triggers optional imports of flash_attn / sageattention that
     may be absent on CPU; those imports are guarded with try/except inside
-    that file, so it should be importable."""
+    that file, so it should be importable.
+
+    The reference also does `from utils import hash_state_dict_keys` as a
+    fallback (line 10-13 of vendored wan_video_dit.py). Inject a `utils`
+    shim before exec so that fallback succeeds without the LSWA sibling
+    repo on sys.path (post-Fix-J the LSWA bootstrap is removed). Same
+    pattern as bsa_kernel._load_reference_module and tests/test_lswa.py."""
+    import types
     path = PROJECT_ROOT / "wan_video_dit.py"
     spec = importlib.util.spec_from_file_location("ref_wan_video_dit", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules.setdefault("ref_wan_video_dit", mod)
+
+    old_utils = sys.modules.get("utils")
+    shim = types.ModuleType("utils")
+    shim.hash_state_dict_keys = lambda state_dict: state_dict
+    sys.modules["utils"] = shim
     try:
-        spec.loader.exec_module(mod)
-    except Exception as exc:
-        pytest.skip(f"reference module not loadable on this host: {exc}")
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as exc:
+            pytest.skip(f"reference module not loadable on this host: {exc}")
+    finally:
+        if old_utils is None:
+            sys.modules.pop("utils", None)
+        else:
+            sys.modules["utils"] = old_utils
     return mod
 
 

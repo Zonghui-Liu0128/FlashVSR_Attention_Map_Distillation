@@ -9,11 +9,19 @@ class _FakeBasicVSRDataset_hw_crop:
         raise NotImplementedError
 
 
-_fake_degradation = types.ModuleType("degradation")
-_fake_parent = types.ModuleType("degradation.basic_vsr_dataset_hw_crop")
+# Post-Fix-J: degradation/ is vendored under flashvsr_b1.data, so dataset_b1
+# now does `from .degradation.basic_vsr_dataset_hw_crop import ...` (relative
+# package import). Stub the modules under the new namespace so cv2 / imageio
+# / pandas don't have to be installed in the test env. Stub the parent
+# package too so the `from .degradation...` resolves without executing
+# `flashvsr_b1/data/degradation/__init__.py`.
+_fake_pkg_root = types.ModuleType("flashvsr_b1.data.degradation")
+_fake_parent = types.ModuleType(
+    "flashvsr_b1.data.degradation.basic_vsr_dataset_hw_crop"
+)
 _fake_parent.BasicVSRDataset_hw_crop = _FakeBasicVSRDataset_hw_crop
-sys.modules.setdefault("degradation", _fake_degradation)
-sys.modules["degradation.basic_vsr_dataset_hw_crop"] = _fake_parent
+sys.modules.setdefault("flashvsr_b1.data.degradation", _fake_pkg_root)
+sys.modules["flashvsr_b1.data.degradation.basic_vsr_dataset_hw_crop"] = _fake_parent
 
 from flashvsr_b1.data.dataset_b1 import DatasetB1
 

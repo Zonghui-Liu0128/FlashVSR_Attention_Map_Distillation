@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import os, sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-_LSWA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "FlashVSR_LSWA"))
-if _LSWA_ROOT not in sys.path:
-    sys.path.insert(0, _LSWA_ROOT)
 
 import torch
 import torch.nn as nn
