@@ -1,0 +1,44 @@
+{
+  "total_videos": 4582,
+  "videos_with_cuts": 40,
+  "videos_dropped": 0,
+  "total_scenes_kept": 4600,
+  "total_scenes_dropped_short": 25,
+  "min_scene_frames": 89,
+  "training_window_frames": 33,
+  "transnet_threshold": 0.65,
+  "detector_resolution": [
+    27,
+    48
+  ],
+  "videos": {
+    "7568f8d2-d472-41c5-83b3-0a72b2c3182a.mp4": {
+      "path": "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1030_huashan/part-0215/7568f8d2-d472-41c5-83b3-0a72b2c3182a.mp4",
+      "fps": 48.0,
+      "total_frames": 175,
+      "short_video": false,
+      "scenes": [
+        {
+          "scene_id": 0,
+          "start_frame": 0,
+          "end_frame": 175,
+          "n_frames": 175
+        }
+      ],
+      "dropped_scenes": []
+    },
+    "edfb463f-cc2f-4c3a-a624-550b3798a569.mp4": {
+      "path": "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1030_huashan/part-3616/edfb463f-cc2f-4c3a-a624-550b3798a569.mp4",
+      "fps": 23.98,
+      "total_frames": 302,
+      "short_video": false,
+      "scenes": [
+        {
+          "scene_id": 0,
+          "start_frame": 0,
+          "end_frame": 302,
+          "n_frames": 302
+        }
+      ],
+      "dropped_scenes": []
+    },
