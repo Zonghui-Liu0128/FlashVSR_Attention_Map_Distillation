@@ -1,11 +1,12 @@
 # FlashVSR Plan B1 — B200 部署与验证指南
 
-> 适用代码:HEAD = `a658777`(post **2026-05-18 六项 B200 关键修复**)
+> 适用代码:HEAD = `b70c9e6`(post **2026-05-18 八项 B200 关键修复 + 架构级 Fix H**)
 > 设计依据:`task_b1.md`(决策表见 §0)
+> 上游对齐:FlashVSR official (`OpenImagingLab/FlashVSR`) + vendored `wan_video_dit.py`
 > 实施计划:`docs/superpowers/plans/2026-05-16-vsr-b1-sparse-onestep.md`
-> 测试状态:**85 passed / 3 skipped / 1 failed**(macOS CPU 端,1 failed = Issue H 架构级,待办)。B200 期望:**88 passed / 0 skipped / 1 failed**(3 个 CUDA/LPIPS gated 测试在 B200 跑起来,Issue H 仍 fail 等设计完成)。
+> 测试状态:**87 passed / 3 skipped / 0 failed**(macOS CPU 端,**全绿**!)。B200 期望:**90 passed / 0 skipped / 0 failed**(3 个 CUDA/LPIPS gated 测试在 B200 跑起来全部 PASS)。
 
-> **关键变化(2026-05-18 批次)**: 6 项 critical + safety 修复已 merge(commit `7433f31` → `a658777`)。详见 §0.1。
+> **关键变化(2026-05-18 批次)**: 8 项 critical + safety 修复 + 1 项架构级 Fix H 已全部 merge(commit `7433f31` → `b70c9e6`)。详见 §0.1。Fix H 把 LR 条件注入路径改成与 FlashVSR 上游一致的 **per-block additive residual at DiT inner dim 1536**,不再走 `z_t + LR_latent` 这条破链路。
 
 ---
 
@@ -18,7 +19,7 @@
 | 训练入口 `python -m flashvsr_b1.train.trainer_b1 --config ...` | ✅ | OmegaConf + DDP + AdamW + bucket sampler + bf16 autocast + ckpt/eval cadence |
 | Teacher / Student 分离 | ✅ | Teacher 单独从 `teacher_ckpt` 加载,frozen + .eval()(或 student deep-copy) |
 | `B1Pipeline / B1WanModel` 工厂模式安全 | ✅ **fix-2026-05-18-C** | `cls.__new__` 后插入 `nn.Module.__init__` 兜底,对非-nn.Module base(mock)也安全 |
-| Single-step forward `b1_forward(LR_latent, z_t, t_star)` | ✅ | 加在 `B1WanModel`,映射到 Wan 的 `(x=z_t+LR_latent, timestep, context=0)`。**注意**: `z_t + LR_latent` 通道适配是 Issue H 的待办点 |
+| Single-step forward `b1_forward(LR_latents, z_t, t_star)` | ✅ **fix-2026-05-18-H** | 上游对齐: `z_t` (B,16,T_lat,H_lat,W_lat) 5D 16-ch 进 `patch_embedding`; `LR_latents` 是 list[Tensor] (B,N,1536) 在 DiT 内 block loop 逐 block 加性残差 (`wan_video_dit.py:862-864`)。**不再做 `z_t + LR_latent`** |
 | `B1WanModel.forward` aux 形状 | ✅ **fix-2026-05-18-A** | `{"h_out": {layer: tensor}, "A_blk": {layer: tensor}}`(outer=metric, inner=layer),与 task_b1.md §4 line 415 spec 对齐 |
 | BSA 时间因果掩码 | ✅ | 在 `generate_draft_block_mask` 上叠加 `t_k <= t_q` 掩码 |
 | Shadow attn block-time causal | ✅ | 修正 flat-index → block-time |
@@ -33,9 +34,9 @@
 | **BSA parity test on real kernel** | ⚠️ B200 验证 | 单测加了 skipif,B200 启动训练前必跑 |
 | **`evaluate_checkpoint` 真指标** | ⚠️ 操作员补 | `_evaluate_one_video` / `_measure_fps` 是 `NotImplementedError` 占位 |
 | **真 TCDecoder ckpt** | ⚠️ 操作员补 | 不传 `tc_decoder_ckpt` 时 `build_tc_decoder` 返回 identity stub |
-| **Issue H: `lq_proj` 1536 ch vs Wan in_dim 16 不匹配** | ❌ 待办 | `prepare_batch` 输出 1536 通道 LR_latent,Wan DiT patch_embedding 期望 16 通道。架构级 conditioning 路径需要重新设计,见 §8.9 |
+| ~~Issue H: `lq_proj` 1536 ch vs Wan in_dim 16 不匹配~~ | ✅ **fix-2026-05-18-H** (commit `b70c9e6`) | 已修复: per-block additive residual at 1536-dim inside block loop,与 FlashVSR 上游一致 |
 
-**结论:核心训练链路已经通,且 6 项 critical 修复已 merge。Issue H(通道适配)是唯一阻塞真训练的问题;B200 启动前必须完成 §6 的 6 项验证,且 §7 的 4 项操作员任务才能跑完整 20k step。**
+**结论:核心训练链路完全打通,8 项 fix + 1 项架构级 Fix H 已全部 merge。pytest 全绿(macOS 87/3/0,B200 预期 90/0/0)。B200 启动前仅需完成 §6 的 7 项验证 + §7 的 4 项操作员实现(O5 已随 Fix H 完成)即可跑完整 20k step。**
 
 ---
 
@@ -51,12 +52,13 @@
 | 4 | **D** Bucket sampler DDP 同步 | `65b5c62` | **训练线上必崩 bug**: 原 `__iter__` 用 `chunks[rank::num_replicas]`(每隔 N 取一个),导致 rank 0 拿 [L,L,L,...]、rank 1 拿 [P,P,P,...] —— 同 DDP step 不同 bucket → NCCL AllReduce shape 不一致 → 训练第一步 hang。改用 "super-chunk" 单位 = `batch_size * num_replicas`,每个 super-chunk 单 bucket,所有 rank 在同 super-chunk 内取互不重叠的 batch 切片。加 3-rank 回归测试 `test_super_chunk_same_bucket_and_disjoint_across_ranks` | `test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks` | `logs/20260518-fix-d-bucket-sampler-ddp.md` |
 | 5 | **E** L_lpips 5D 视频展平 | `9586541` | tc_decoder 返回 `(B,3,T_rgb,H,W)` 5D,数据集 HR 也是 5D;原 `L_lpips` 直接喂给 LPIPS(只接受 4D BCHW)。加 `_flatten_video_to_bchw` 帮手,5D→`(B*T,3,H,W)` per-frame BCHW;支持 5D/5D、5D/4D(broadcast)、4D/4D 三种;3D/6D 直接 `ValueError`(无静默 reshape)。加 mock-lpips 测试让 macOS 也能验证形状逻辑 | `test_L_lpips_shape` | `logs/20260518-fix-e-lpips-5d.md` |
 | 6 | **F+G** wan_video_dit portable 加载 | `a658777` | F: `tests/test_lswa.py`、`tests/test_bsa_kernel.py` 把硬编码 `/Users/zonghuiliu/...` 改成 `Path(__file__).resolve().parents[1] / "wan_video_dit.py"`,文件不存在则 `pytest.skip(allow_module_level=True)`。G: `flashvsr_b1/attn/bsa_kernel.py::_load_reference_module` 在 `spec.loader.exec_module(mod)` 之前注入 `utils` shim(`hash_state_dict_keys = lambda x: x`),`try/finally` 还原原 binding,与 test_lswa.py 已用的 shim 模板一致 | `test_bsa_forward_shape`(`ModuleNotFoundError: utils`), `test_bsa_parity_with_root_implementation`(`FileNotFoundError`), `test_lswa_matches_reference_implementation`(`FileNotFoundError`) | `logs/20260518-fix-fg-paths-and-shim.md` |
-| **延后** | **H** lq_proj 1536 vs Wan in_dim 16 | — | **架构级问题**: `prepare_batch` 把 lq_proj 输出当成 `z_t + LR_latent` 喂给 Wan DiT 的 patch_embedding(期望 16 通道)。实际 lq_proj 输出 1536 通道(`cfg.dim`)。简单 channel reduce 是静默 fallback(被前一版 Codex 误加,已回滚)。**正确路径**: z_t 应是 VAE 编码的 HR latent (16 ch),LR_latent (1536 ch) 应在 DiT 内部 feature dim 处作为 cross-attn 条件注入,不是 `+`。需要重新审视 b1_forward 的 conditioning 路径 | `test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding` | 见 Task #34,下一批次 |
+| 7 | **I** BSA 测试 bf16 dtype | `349bd08` | `block_sparse_attn` 库只支持 fp16/bf16,但 `test_bsa_forward_shape` + `test_bsa_parity_with_root_implementation` 用 fp32 张量 → `RuntimeError: only support fp16 and bf16`。改 Q/K/V `dtype=torch.bfloat16`,参考 `SelfAttention.bfloat16()`,加 dtype 断言;parity 测试改为 shape-only(数值 parity 因为我们额外叠了时间因果掩码本就不可能) | 2 个 BSA CUDA 测试 | `logs/20260518-fix-i-bsa-bf16-dtype.md` |
+| 8 | **H** LR 条件注入路径(架构级) | `b70c9e6` | **与 FlashVSR 上游对齐**: `prepare_batch` 输出 `z_t` (B,16,T_lat,H_lat,W_lat) 5D 16-ch + `LR_latents` list[(B,N,1536)] token-last。`b1_forward(LR_latents, z_t, t_star)` 直接 `self.forward(z_t, ..., LQ_latents=LR_latents)` 不再 `+`。`B1WanModel.forward` 加 `LQ_latents` 参数,在 block loop 内 `if LQ_latents is not None and layer_idx < len(LQ_latents): x = x + LQ_latents[layer_idx]`,精确匹配 vendored `wan_video_dit.py:862-864`。`Causal_LQ4x_Proj` 不动(在 pipeline 边界 transpose 转 list)。2 个新 wan_dit_b1 contract 测试 pin 不再 regress 到 additive-before-patchify | `test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding` + 3 个新 contract + 6 个 mock prepare_batch 适配 | `logs/20260518-fix-h-lr-conditioning.md` |
 
 **修复前 → 修复后 测试计数**:
 - B200 上(用户首次):**9 failed**(报错原文见 `内网B200 pytest报错.txt`)
-- macOS 上(修复完成):**85 passed / 3 skipped / 1 failed**(1 failed = Issue H)
-- B200 上(`git pull` 后应该):**88 passed / 0 skipped / 1 failed**(3 个 CUDA + LPIPS 测试在 B200 跑起来,Issue H 仍 fail)
+- macOS 上(全部修复完成):**87 passed / 3 skipped / 0 failed** ✅ **全绿**
+- B200 上(`git pull` 后应该):**90 passed / 0 skipped / 0 failed**(3 个 CUDA + LPIPS gated 测试在 B200 跑起来全部 PASS)
 
 **修复期间未触碰**:
 - `task_b1.md`(spec 不动)
@@ -117,7 +119,7 @@
 | 文件 | 作用 |
 | --- | --- |
 | `flashvsr_components.py` | `FlashVSRTinyConfig` / `Causal_LQ4x_Proj` / `build_tc_decoder` / `load_flashvsr_tiny_checkpoint` |
-| `wan_dit_b1.py` | `SelfAttentionB1`(BSA / LSWA 切换 + aux 导出)+ `B1WanModel`(继承 DiffSynth WanModel,替换 self_attn 层 + `b1_forward`)。**fix-C(2026-05-18)**: `from_wan_model` 内 `cls.__new__` 后 `torch.nn.Module.__init__(b1_model)` 兜底。**fix-A(2026-05-18)**: `forward` 内 aux 聚合用 `setdefault(key, {})[layer_idx] = value`,产出 spec 形状 `{"h_out": {layer: t}, "A_blk": {layer: t}}` |
+| `wan_dit_b1.py` | `SelfAttentionB1`(BSA / LSWA 切换 + aux 导出)+ `B1WanModel`(继承 DiffSynth WanModel,替换 self_attn 层 + `b1_forward`)。**fix-C(2026-05-18)**: `from_wan_model` 内 `cls.__new__` 后 `torch.nn.Module.__init__(b1_model)` 兜底。**fix-A(2026-05-18)**: `forward` 内 aux 聚合用 `setdefault(key, {})[layer_idx] = value`,产出 spec 形状 `{"h_out": {layer: t}, "A_blk": {layer: t}}`。**fix-H(2026-05-18)**: `forward` 加 `LQ_latents` 参数 + block loop 内 `x = x + LQ_latents[layer_idx]` 残差注入(精确匹配 vendored `wan_video_dit.py:862-864`);`b1_forward` 接 list-form LR_latents,不再 `z_t + LR`;非 list 输入直接 ValueError |
 
 ### 2.4 `flashvsr_b1/losses/`(每个文件一个 loss,< 15 行)
 | 文件 | 公式 |
@@ -136,7 +138,7 @@
 ### 2.6 `flashvsr_b1/pipelines/`
 | 文件 | 作用 |
 | --- | --- |
-| `b1_pipeline.py` | 派生 `WanVideoPipeline`。`from_b1_config(cfg)` 加载 student + teacher(独立)+ LQ_proj + TCDecoder + LPIPS。`prepare_batch(batch)` 把 dataset 输出转换为 `(LR_latent, z_t, t_star, gt_hr)`。**fix-C(2026-05-18)**: `cls.__new__` 后 `torch.nn.Module.__init__(pipe)` 兜底;macOS-fallback `class WanVideoPipeline(torch.nn.Module)` 显式继承 `nn.Module`。**注意 Issue H**: `prepare_batch` 当前不做 1536→16 channel 适配,Wan DiT 的 patch_embedding 会拒绝 |
+| `b1_pipeline.py` | 派生 `WanVideoPipeline`。`from_b1_config(cfg)` 加载 student + teacher(独立)+ LQ_proj + TCDecoder + LPIPS。`prepare_batch(batch)` 返回 **`(LR_latents: list[Tensor], z_t: (B,16,T_lat,H_lat,W_lat), t_star, hr_rgb)`**。**fix-C(2026-05-18)**: `cls.__new__` 后 `torch.nn.Module.__init__(pipe)` 兜底。**fix-H(2026-05-18)**: 上游对齐 LR 注入 — lq_proj 输出 transpose 成 list 形态 token-last;z_t 用 16 通道 noise 在 `(token_grid × patch_size)` shape 上构造 |
 
 ### 2.7 `flashvsr_b1/train/`
 | 文件 | 作用 |
@@ -445,12 +447,13 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 | V3 | BSA parity vs root | `pytest tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation -v` | PASS(fix-F 后路径 portable)。若失败,检查 `kv_len` / `local_range` 是否需要按 reference 实际值调整 |
 | V4 | **DDP 桶 super-chunk 同步**(强化) | `python -m pytest tests/test_bucket_sampler.py tests/review_logic/test_b1_contract_gaps.py::test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks -v` | 5 PASS。**fix-D 前** rank0/rank1 在同步骤拿到不同 bucket,会 NCCL hang。本次回归测试用 3 rank 同时检查 disjoint + 同 bucket |
 | V5 | LPIPS 5D shape | `python -m pytest tests/test_losses.py::test_L_lpips_shape -v` | PASS(fix-E)。若失败,检查 `L_lpips` 是否真的 import 的是 commit `9586541` 之后的版本 |
-| V6 | 单卡 smoke 20 step | `bash scripts/10_smoke_one_step.sh flashvsr_b1/configs/b1_bsa90.yaml` | **当前会因 Issue H 报通道不匹配崩溃** ⚠️ —— 训练前必须完成 Issue H 设计与实现。完成后:不 OOM;`log.txt` ≥ 8 行;`ckpt/step_*.pt` 落地 |
-| V7 | 真 ckpt 加载 + 一次完整 forward | 同 V6 smoke,观察第一行 step 是否 < 30s(冷启动后) | 不 crash,teacher + student state_dict 加载完整。**前置依赖 Issue H 完成** |
+| V6 | 单卡 smoke 20 step | `bash scripts/10_smoke_one_step.sh flashvsr_b1/configs/b1_bsa90.yaml` | **Fix H 已合并(b70c9e6),解锁此项**。预期: 不 OOM;`log.txt` ≥ 8 行;`ckpt/step_*.pt` 落地 |
+| V7 | 真 ckpt 加载 + 一次完整 forward | 同 V6 smoke,观察第一行 step 是否 < 30s(冷启动后) | 不 crash,teacher + student state_dict 加载完整。**Fix H 已解锁,可执行** |
+| V8 | **新**: LR 残差注入路径回归 | `python -m pytest tests/test_wan_dit_b1.py::test_b1_forward_threads_LQ_latents_to_block_loop tests/test_wan_dit_b1.py::test_b1_forward_rejects_tensor_LR_latents -v` | 2 PASS。确认 LR 走 list-form LQ_latents 而非 `z_t + LR`,防 Fix H 回退 |
 
 ---
 
-## 7. 操作员必须补的 5 项实现(O5 = Issue H, 训练前必做)
+## 7. 操作员必须补的 4 项实现(O5/Fix H 已由 commit `b70c9e6` 完成)
 
 | # | 项目 | 位置 | 任务 |
 | --- | --- | --- | --- |
@@ -458,7 +461,7 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 | O2 | `_measure_fps` 真实实现 | `eval/eval_sr.py:_measure_fps` | warmup 5 chunk → 稳态 FPS@720p / 1080p。`torch.cuda.synchronize` + `time.perf_counter` |
 | O3 | 真 TCDecoder ckpt 路径 | `flashvsr_b1/configs/b1_*.yaml:tc_decoder_ckpt` | 默认 `build_tc_decoder(None)` 返回 identity stub,导致 `L_lpips(latent, hr)` shape 不匹配。**必须填真路径** |
 | O4 | grad checkpoint 开关 | `flashvsr_b1/train/trainer_b1.py` | `B1WanModel.forward` 已 `del use_gradient_checkpointing`(故意丢弃)。如果 OOM,手动改 trainer 在 forward 内 wrap `torch.utils.checkpoint.checkpoint` |
-| **O5** | **Issue H: lq_proj → Wan DiT 通道适配** | `b1_pipeline.prepare_batch` + `wan_dit_b1.b1_forward` | **训练前必做**。当前 prepare_batch 返回 `LR_latent` shape `(B, 1536, T, H, W)` 当作 `z_t` 加进 patch_embedding(期望 16 通道)。正确路径需要:① z_t 改为 VAE 编码的 HR latent (16 ch),② LR_latent (1536 ch) 在 DiT 内部 feature dim 处通过 cross-attn / 残差注入,不是 `+`。这是 spec §2 流程图的细化:`embed(LR_latent) ⊕ embed(z_t)` 中 `⊕` 不能简单理解为通道相加。需要先确认 task_b1.md / FlashVSR 原版的具体注入位置 |
+| ~~O5~~ | ~~Issue H: lq_proj → Wan DiT 通道适配~~ | ~~`prepare_batch` + `b1_forward`~~ | **✅ 已完成 commit `b70c9e6`** — 与 FlashVSR 上游一致的 per-block additive residual at DiT inner dim 1536 |
 
 ---
 
@@ -472,7 +475,8 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 6. **Shadow attention 计算开销**:6 个 distill 层,每层一次 `[B,H,1320,1320]` softmax。fp32 下大概 60 MB / 层,360 MB 累积。bf16 autocast 下 shadow 内部 softmax 仍是 fp32(避免数值不稳),开销不变。
 7. **DiffSynth `redirect_common_files`** 默认 False;如果内网 ckpt 路径是 huggingface 风格,可能需要置 True。
 8. **Dataset 父类 `imgs` 字段假设**:`DatasetB1.__init__` 利用 `self.imgs` 做 bucket_index 预扫描(LSWA 父类 `BasicVSRDataset_hw_crop:179` 验证存在)。如果父类未来重命名,需要同步改 dataset_b1.py。
-9. **【NEW 2026-05-18】Issue H — lq_proj 1536 通道 vs Wan DiT in_dim 16 通道不匹配**(参见 §0.1 H 行 + §7 O5):`b1_forward` 当前做 `x = z_t + LR_latent` 然后送 `self.forward(x, ...)`,内部 `self.patchify(x)` 走 patch_embed (Conv3d in_channels=16) → 1536 通道输入会 shape mismatch。试图用 silent channel reduce 绕过等于把契约测试糊掉,已禁止。**正确路径需要重新读 task_b1.md §2 line 121-148 的伪代码 `x = embed(LR_latent) ⊕ embed(z_t) ⊕ time_embed(t_star)`**,确认 `embed` 是什么操作(很可能 LR_latent 和 z_t 在 DiT 内部 feature dim 1536 处合流,而不是在 raw latent 16 维度合流)。在下一批次解决前,V6 / V7 必然崩。
+9. ~~**【2026-05-18】Issue H — lq_proj 1536 通道 vs Wan DiT in_dim 16 通道不匹配**~~ — **已修复 commit `b70c9e6`(详见 §0.1 第 8 行)**: 上游 FlashVSR 在 DiT block loop 内做 per-block additive residual at 1536-dim,而非 patch_embed 之前 `+`。`prepare_batch` 现在产 16-ch z_t + list-form LR_latents,`b1_forward` 直接 forward(z_t, LQ_latents=...)。V6/V7 已解锁。
+10. **新增子风险(2026-05-18)** — **lq_proj 与 z_t token count 必须严格匹配**:`Causal_LQ4x_Proj` PixelShuffle3d 是 `(1, 16, 16)`,要求 LR 输入处于 HR 分辨率(1024×1920 而非 256×480)才能产 `64×120` 空间 token 数匹配 patchify(z_t) 的 `64×120`。若 dataset 给的是真 LR 分辨率,需要在 prepare_batch 加 `F.interpolate` 上采样到 HR 网格,或确认 LSWA dataset 已经在内部做了 bicubic 上采样。**B200 smoke 跑起来 V6 时如果 LR_latents[0].shape[1] != z_t patchify N,会直接 shape mismatch**。
 
 ---
 
@@ -517,14 +521,16 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 - 设计决策:`task_b1.md §0` 决策表
 - 任务追踪报告(17 项原子任务):`logs/<YYYYMMDD>-task<N>-*.md`
 - 2026-05-17 critical fix 记录:`logs/20260517-critical-fixes.md`
-- **2026-05-18 B200-回流的 6 项修复(本批次)**,逐项 commit + log:
+- **2026-05-18 B200-回流的 8 项修复(本批次)**,逐项 commit + log:
   - `logs/20260518-fix-c-module-init.md` ↔ commit `7433f31`
   - `logs/20260518-fix-b-bsa-grid-test.md` ↔ commit `0b2e444`
   - `logs/20260518-fix-a-aux-shape.md` ↔ commit `2ca6194`
   - `logs/20260518-fix-d-bucket-sampler-ddp.md` ↔ commit `65b5c62`
   - `logs/20260518-fix-e-lpips-5d.md` ↔ commit `9586541`
   - `logs/20260518-fix-fg-paths-and-shim.md` ↔ commit `a658777`
-- 待办(下一批次):**Issue H** — `prepare_batch / b1_forward` 1536→16 通道适配设计与实现(O5)
+  - `logs/20260518-fix-i-bsa-bf16-dtype.md` ↔ commit `349bd08`
+  - `logs/20260518-fix-h-lr-conditioning.md` ↔ commit `b70c9e6` (架构级 LR 注入路径修复,与 FlashVSR 上游一致)
+- 所有 fix 完成:✅ macOS 全绿 87/3/0,B200 预期 90/0/0
 - B200 操作员首次报错原始记录:`内网B200 pytest报错.txt`
 - 集成 review:`tests/review_logic/test_review_real_logic.py` + `tests/review_logic/test_b1_contract_gaps.py`
 
