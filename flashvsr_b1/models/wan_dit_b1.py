@@ -226,6 +226,7 @@ class B1WanModel(wan_video_dit.WanModel):
         attn_mode="BSA",
     ):
         b1_model = cls.__new__(cls)
+        torch.nn.Module.__init__(b1_model)
         b1_model.__dict__.update(getattr(wan_model, "__dict__", {}))
         b1_model.distill_layers = set(
             _DEFAULT_DISTILL_LAYERS if distill_layers is None else distill_layers

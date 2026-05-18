@@ -87,6 +87,7 @@ def test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding():
             self.in_dim = cfg.in_dim
 
     pipe = B1Pipeline.__new__(B1Pipeline)
+    torch.nn.Module.__init__(pipe)
     pipe.dit = FakeDit()
     pipe.lq_proj = FakeLQProj()
     pipe.cfg_single_step_t = 999

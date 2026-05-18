@@ -27,7 +27,7 @@ try:
 except Exception as exc:  # pragma: no cover - exercised only when DiffSynth deps are absent.
     ModelConfig = None
 
-    class WanVideoPipeline:  # type: ignore[no-redef]
+    class WanVideoPipeline(torch.nn.Module):  # type: ignore[no-redef]
         _import_error = exc
 
         @staticmethod
@@ -128,6 +128,7 @@ class B1Pipeline(WanVideoPipeline):
 
         base_pipe = WanVideoPipeline.from_pretrained(**_pretrained_kwargs_from_cfg(cfg))
         pipe = cls.__new__(cls)
+        torch.nn.Module.__init__(pipe)
         pipe.__dict__.update(getattr(base_pipe, "__dict__", {}))
         pipe.teacher_ckpt = _cfg_get(cfg, "teacher_ckpt", None)
         pipe.student_ckpt = _cfg_get(cfg, "student_ckpt", None)
