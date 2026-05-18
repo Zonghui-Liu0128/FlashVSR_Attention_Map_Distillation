@@ -5,6 +5,38 @@
   warnings.warn(msg)
 Loading model from: /srv/workspace/p_kepom/.local/lib/python3.11/site-packages/lpips/weights/v0.1/vgg.pth
 [BasicVSRDataset_hw_crop] Number of metadata samples: 18854; repeated: 18854
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 435, in <module>
+    train_main(args.config, args.overrides)
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 405, in train_main
+    for batch in dl:
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 741, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1548, in _next_data
+    return self._process_data(data, worker_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1586, in _process_data
+    data.reraise()
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_utils.py", line 785, in reraise
+    raise exception
+KeyError: Caught KeyError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 358, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 54, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 54, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+            ~~~~~~~~~~~~^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/data/dataset_b1.py", line 24, in __getitem__
+    h, w = item["lr"].shape[-2:]
+           ~~~~^^^^^^
+KeyError: 'lr'
 
 运行bash scripts/20a_train_b1_bsa90.sh有报错：
 (flashvsr_b200) p_kepom@sh-qingpu-a04-25-01:/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation$ bash scripts/20a_train_b1_bsa90.sh 
