@@ -350,7 +350,7 @@ class B1WanModel(wan_video_dit.WanModel):
             dim=-1,
         ).reshape(f * h * w, 1, -1).to(x.device)
 
-        layer_aux = {}
+        layer_aux: dict[str, dict[int, torch.Tensor]] = {}
         for layer_idx, block in enumerate(self.blocks):
             x, aux = self._forward_block_b1(
                 block,
@@ -363,8 +363,12 @@ class B1WanModel(wan_video_dit.WanModel):
                 w=w,
                 return_aux=return_aux,
             )
-            if aux is not None:
-                layer_aux[layer_idx] = aux
+            if aux is None:
+                continue
+            # Spec (task_b1.md line 415): aux["h_out"][layer_idx], aux["A_blk"][layer_idx].
+            # Outer key is the metric name, inner key is the distill layer index.
+            for key, value in aux.items():
+                layer_aux.setdefault(key, {})[layer_idx] = value
 
         x = self.head(x, t)
         x = self.unpatchify(x, (f, h, w))

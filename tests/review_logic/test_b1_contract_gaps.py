@@ -28,7 +28,10 @@ def test_trainer_accepts_b1wanmodel_layer_aux_contract():
             if not return_aux:
                 return out
             attn = torch.full((1, 1, 2, 2), 0.5, dtype=out.dtype, device=out.device)
-            return out, {layer: {"h_out": out, "A_blk": attn} for layer in layers}
+            return out, {
+                "h_out": {layer: out for layer in layers},
+                "A_blk": {layer: attn for layer in layers},
+            }
 
     trainer = B1Trainer.__new__(B1Trainer)
     nn.Module.__init__(trainer)
