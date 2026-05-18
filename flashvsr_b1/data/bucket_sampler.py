@@ -45,14 +45,14 @@ class AspectRatioBucketSampler(DistributedSampler):
         self.epoch = 0
 
     def __iter__(self) -> Iterator[int]:
-        chunks = self._build_interleaved_chunks()
-        rank_chunks = chunks[self.rank :: self.num_replicas]
-        indices = [idx for chunk in rank_chunks for idx in chunk]
+        super_chunks = self._build_interleaved_chunks()
+        start = self.rank * self.batch_size
+        end = start + self.batch_size
+        indices = [idx for chunk in super_chunks for idx in chunk[start:end]]
         return iter(indices)
 
     def __len__(self) -> int:
-        chunks = self._build_interleaved_chunks()
-        return sum(len(chunk) for chunk in chunks[self.rank :: self.num_replicas])
+        return len(self._build_interleaved_chunks()) * self.batch_size
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = int(epoch)
@@ -73,10 +73,11 @@ class AspectRatioBucketSampler(DistributedSampler):
         return dict(grouped)
 
     def _chunk_indices(self, indices: list[int]) -> list[list[int]]:
+        super_chunk_size = self.batch_size * self.num_replicas
         chunks = []
-        for start in range(0, len(indices), self.batch_size):
-            chunk = indices[start : start + self.batch_size]
-            if len(chunk) == self.batch_size or not self.drop_last:
+        for start in range(0, len(indices), super_chunk_size):
+            chunk = indices[start : start + super_chunk_size]
+            if len(chunk) == super_chunk_size or not self.drop_last:
                 chunks.append(chunk)
         return chunks
 

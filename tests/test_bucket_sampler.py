@@ -45,3 +45,43 @@ def test_ddp_ranks_disjoint_and_complete():
     a, b = set(s0), set(s1)
     assert len(a & b) == 0
     assert len(a | b) >= int(0.95 * len(ds))
+
+def test_super_chunk_same_bucket_and_disjoint_across_ranks():
+    """At every DDP step, every rank must see the SAME bucket and DISJOINT
+    item indices. Failure here would deadlock NCCL AllReduce on the first
+    training step (different seq_len per rank)."""
+    ds = FakeDataset(n_land=12, n_port=12)
+    num_replicas = 3
+    batch_size = 4
+    per_rank = []
+    for rank in range(num_replicas):
+        sampler = AspectRatioBucketSampler(
+            ds, num_replicas=num_replicas, rank=rank,
+            batch_size=batch_size, seed=0,
+        )
+        per_rank.append(list(iter(sampler)))
+
+    steps = min(len(r) for r in per_rank) // batch_size
+    assert steps > 0, "no full DDP steps were produced"
+
+    for step in range(steps):
+        rank_batches = [
+            per_rank[r][step * batch_size : (step + 1) * batch_size]
+            for r in range(num_replicas)
+        ]
+        flat = [i for batch in rank_batches for i in batch]
+        assert len(set(flat)) == len(flat), (
+            f"step {step} rank batches overlap: {rank_batches}"
+        )
+        buckets = [
+            {ds.bucket_index[i] for i in batch}
+            for batch in rank_batches
+        ]
+        for r, b in enumerate(buckets):
+            assert len(b) == 1, (
+                f"step {step} rank {r} mixes buckets {b}"
+            )
+        unique_buckets = {next(iter(b)) for b in buckets}
+        assert len(unique_buckets) == 1, (
+            f"step {step} ranks disagree on bucket: {buckets}"
+        )
