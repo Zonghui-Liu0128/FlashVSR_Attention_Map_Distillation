@@ -1,9 +1,11 @@
 # FlashVSR Plan B1 — B200 部署与验证指南
 
-> 适用代码:HEAD = `177ee84`(`fix(b1): close 7 critical + 3 important integration gaps`)
+> 适用代码:HEAD = `a658777`(post **2026-05-18 六项 B200 关键修复**)
 > 设计依据:`task_b1.md`(决策表见 §0)
 > 实施计划:`docs/superpowers/plans/2026-05-16-vsr-b1-sparse-onestep.md`
-> 测试状态:**79 passed / 3 skipped**(macOS CPU 端)。3 个 skipped 全部需要 B200 真机验证。
+> 测试状态:**85 passed / 3 skipped / 1 failed**(macOS CPU 端,1 failed = Issue H 架构级,待办)。B200 期望:**88 passed / 0 skipped / 1 failed**(3 个 CUDA/LPIPS gated 测试在 B200 跑起来,Issue H 仍 fail 等设计完成)。
+
+> **关键变化(2026-05-18 批次)**: 6 项 critical + safety 修复已 merge(commit `7433f31` → `a658777`)。详见 §0.1。
 
 ---
 
@@ -12,23 +14,55 @@
 | 维度 | 状态 | 备注 |
 | --- | --- | --- |
 | 仓骨架 | ✅ | `flashvsr_b1/` 25 个 py 文件,与 `task_b1.md §1` 对齐 |
-| 单元 + 集成测试(mock + real) | ✅ | 79 通过,真集成测试在 `tests/review_logic/` |
+| 单元 + 集成测试(mock + real) | ✅ | macOS 85 通过 / 3 skipped(CUDA + LPIPS gated)/ 1 failed(Issue H, 见 §8.9) |
 | 训练入口 `python -m flashvsr_b1.train.trainer_b1 --config ...` | ✅ | OmegaConf + DDP + AdamW + bucket sampler + bf16 autocast + ckpt/eval cadence |
 | Teacher / Student 分离 | ✅ | Teacher 单独从 `teacher_ckpt` 加载,frozen + .eval()(或 student deep-copy) |
-| Single-step forward `b1_forward(LR_latent, z_t, t_star)` | ✅ | 加在 `B1WanModel`,映射到 Wan 的 `(x=z_t+LR_latent, timestep, context=0)` |
+| `B1Pipeline / B1WanModel` 工厂模式安全 | ✅ **fix-2026-05-18-C** | `cls.__new__` 后插入 `nn.Module.__init__` 兜底,对非-nn.Module base(mock)也安全 |
+| Single-step forward `b1_forward(LR_latent, z_t, t_star)` | ✅ | 加在 `B1WanModel`,映射到 Wan 的 `(x=z_t+LR_latent, timestep, context=0)`。**注意**: `z_t + LR_latent` 通道适配是 Issue H 的待办点 |
+| `B1WanModel.forward` aux 形状 | ✅ **fix-2026-05-18-A** | `{"h_out": {layer: tensor}, "A_blk": {layer: tensor}}`(outer=metric, inner=layer),与 task_b1.md §4 line 415 spec 对齐 |
 | BSA 时间因果掩码 | ✅ | 在 `generate_draft_block_mask` 上叠加 `t_k <= t_q` 掩码 |
 | Shadow attn block-time causal | ✅ | 修正 flat-index → block-time |
 | LSWA 路径 | ✅ | 从根 `wan_video_dit.py` 移植,数值 parity 验证通过 |
 | Loss 四件套(out / lpips / block_kl / attn_out) | ✅ | 数值与 spec §4.2 公式一致 |
+| `L_lpips` 5D 视频张量处理 | ✅ **fix-2026-05-18-E** | `(B,3,T,H,W)` → `(B*T,3,H,W)` 展平后调用 lpips_net;支持 5D/5D, 5D/4D, 4D/4D 三种组合 |
 | λ 调度 + sparsity ramp | ✅ | warmup / main / refine 边界值与 spec §4.3 表一致 |
-| Bucket sampler(横竖屏) | ✅ | DDP 多 rank 用同种子保证一致 |
+| Bucket sampler(横竖屏)+ **DDP super-chunk 同步** | ✅ **fix-2026-05-18-D** | super-chunk size = `batch_size * num_replicas`;同 step 所有 rank 看到同一 bucket、disjoint indices。**修复前会导致 NCCL 第一步 hang** |
 | MetricsLogger + 可视化 | ✅ | log.txt / jsonl / csv / 6-subplot PNG |
+| `wan_video_dit.py` 引用模块 portable 加载 | ✅ **fix-2026-05-18-F+G** | `Path(__file__).resolve().parents[*]` 替换绝对路径;`bsa_kernel._load_reference_module` 注入 `utils` shim |
 | **`block_sparse_attn` 库** | ⚠️ B200 验证 | macOS 无 CUDA,B200 上必须先 build sm_100 wheel |
 | **BSA parity test on real kernel** | ⚠️ B200 验证 | 单测加了 skipif,B200 启动训练前必跑 |
 | **`evaluate_checkpoint` 真指标** | ⚠️ 操作员补 | `_evaluate_one_video` / `_measure_fps` 是 `NotImplementedError` 占位 |
 | **真 TCDecoder ckpt** | ⚠️ 操作员补 | 不传 `tc_decoder_ckpt` 时 `build_tc_decoder` 返回 identity stub |
+| **Issue H: `lq_proj` 1536 ch vs Wan in_dim 16 不匹配** | ❌ 待办 | `prepare_batch` 输出 1536 通道 LR_latent,Wan DiT patch_embedding 期望 16 通道。架构级 conditioning 路径需要重新设计,见 §8.9 |
 
-**结论:核心训练链路已经通,但 B200 启动前必须完成 §6 的 6 项验证,且 §7 的 4 项操作员任务才能跑完整 20k step。**
+**结论:核心训练链路已经通,且 6 项 critical 修复已 merge。Issue H(通道适配)是唯一阻塞真训练的问题;B200 启动前必须完成 §6 的 6 项验证,且 §7 的 4 项操作员任务才能跑完整 20k step。**
+
+---
+
+## 0.1 2026-05-18 修复批次(从 B200 上首次 pytest 报错回流的 6 项关键修复)
+
+操作员在 B200 上首次跑 `pytest tests/` 时报了 9 个 failure(详见 `内网B200 pytest报错.txt`)。回流后的诊断结论是 **6 类根因 + 1 项延后到下一批次的架构问题**。修复顺序与 commit:
+
+| 顺序 | Issue | Commit | 关键改动 | 失败测试 | log |
+|---|---|---|---|---|---|
+| 1 | **C** Module init 兜底 | `7433f31` | `B1Pipeline.from_b1_config` / `B1WanModel.from_wan_model` 在 `cls.__new__(cls)` 后插入 `torch.nn.Module.__init__(...)` 兜底,确保 `_modules / _parameters / _buffers` 存在,然后再 `__dict__.update(base.__dict__)`。生产路径下真 base 的内部 dict 会覆盖空种子,测试路径(SimpleNamespace mock)下空种子保留,使后续 `pipe.dit = ...` 不再炸 | `test_pipeline_replaces_self_attn_with_b1_variant`, `test_C3_pipeline_constructs_separate_teacher`, `test_pipeline_distill_layers_default`, `test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding` (后者实际被 Issue H 接管) | `logs/20260518-fix-c-module-init.md` |
+| 2 | **B** BSA grid 契约测试 | `0b2e444` | `test_bsa_block_size_is_compatible_with_flashvsr_patchified_grid` 原本把 `(22,64,120)` 当成 pre-patch latent 又除一次 `patch_size`,**双重 patchify**。task_b1.md §2 line 113 + line 310 + `MetricsLogger.SEQLEN_PER_VIDEO = 22*64*120` 确认 `(22,64,120)` 已经是 post-patch token grid(BSA 实际看到的)。改测试直接断言 `block_size (2,8,8) | (22,64,120)`,顺带把 C5b / C13 注释里误导的 "LATENT grid" 改成 "post-patch token grid" | `test_bsa_block_size_is_compatible_with_flashvsr_patchified_grid` | `logs/20260518-fix-b-bsa-grid-test.md` |
+| 3 | **A** aux dict 形状 | `2ca6194` | `B1WanModel.forward` 之前聚合成 `{layer_idx: {"h_out": ..., "A_blk": ...}}`(outer=layer)。task_b1.md §4 line 415 + trainer + `test_trainer_b1.py` + `test_C10` 共 7 处都用 `aux["h_out"][layer]`(outer=metric, inner=layer)。模型聚合反了,失败的契约测试也跟着写反了。改模型 forward 用 `setdefault(key, {})[layer_idx] = value`,改失败测试 FakeB1WanModel 返回 spec shape | `test_trainer_accepts_b1wanmodel_layer_aux_contract` | `logs/20260518-fix-a-aux-shape.md` |
+| 4 | **D** Bucket sampler DDP 同步 | `65b5c62` | **训练线上必崩 bug**: 原 `__iter__` 用 `chunks[rank::num_replicas]`(每隔 N 取一个),导致 rank 0 拿 [L,L,L,...]、rank 1 拿 [P,P,P,...] —— 同 DDP step 不同 bucket → NCCL AllReduce shape 不一致 → 训练第一步 hang。改用 "super-chunk" 单位 = `batch_size * num_replicas`,每个 super-chunk 单 bucket,所有 rank 在同 super-chunk 内取互不重叠的 batch 切片。加 3-rank 回归测试 `test_super_chunk_same_bucket_and_disjoint_across_ranks` | `test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks` | `logs/20260518-fix-d-bucket-sampler-ddp.md` |
+| 5 | **E** L_lpips 5D 视频展平 | `9586541` | tc_decoder 返回 `(B,3,T_rgb,H,W)` 5D,数据集 HR 也是 5D;原 `L_lpips` 直接喂给 LPIPS(只接受 4D BCHW)。加 `_flatten_video_to_bchw` 帮手,5D→`(B*T,3,H,W)` per-frame BCHW;支持 5D/5D、5D/4D(broadcast)、4D/4D 三种;3D/6D 直接 `ValueError`(无静默 reshape)。加 mock-lpips 测试让 macOS 也能验证形状逻辑 | `test_L_lpips_shape` | `logs/20260518-fix-e-lpips-5d.md` |
+| 6 | **F+G** wan_video_dit portable 加载 | `a658777` | F: `tests/test_lswa.py`、`tests/test_bsa_kernel.py` 把硬编码 `/Users/zonghuiliu/...` 改成 `Path(__file__).resolve().parents[1] / "wan_video_dit.py"`,文件不存在则 `pytest.skip(allow_module_level=True)`。G: `flashvsr_b1/attn/bsa_kernel.py::_load_reference_module` 在 `spec.loader.exec_module(mod)` 之前注入 `utils` shim(`hash_state_dict_keys = lambda x: x`),`try/finally` 还原原 binding,与 test_lswa.py 已用的 shim 模板一致 | `test_bsa_forward_shape`(`ModuleNotFoundError: utils`), `test_bsa_parity_with_root_implementation`(`FileNotFoundError`), `test_lswa_matches_reference_implementation`(`FileNotFoundError`) | `logs/20260518-fix-fg-paths-and-shim.md` |
+| **延后** | **H** lq_proj 1536 vs Wan in_dim 16 | — | **架构级问题**: `prepare_batch` 把 lq_proj 输出当成 `z_t + LR_latent` 喂给 Wan DiT 的 patch_embedding(期望 16 通道)。实际 lq_proj 输出 1536 通道(`cfg.dim`)。简单 channel reduce 是静默 fallback(被前一版 Codex 误加,已回滚)。**正确路径**: z_t 应是 VAE 编码的 HR latent (16 ch),LR_latent (1536 ch) 应在 DiT 内部 feature dim 处作为 cross-attn 条件注入,不是 `+`。需要重新审视 b1_forward 的 conditioning 路径 | `test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding` | 见 Task #34,下一批次 |
+
+**修复前 → 修复后 测试计数**:
+- B200 上(用户首次):**9 failed**(报错原文见 `内网B200 pytest报错.txt`)
+- macOS 上(修复完成):**85 passed / 3 skipped / 1 failed**(1 failed = Issue H)
+- B200 上(`git pull` 后应该):**88 passed / 0 skipped / 1 failed**(3 个 CUDA + LPIPS 测试在 B200 跑起来,Issue H 仍 fail)
+
+**修复期间未触碰**:
+- `task_b1.md`(spec 不动)
+- `docs/superpowers/plans/*.md`(plan 不动)
+- 任何 `__init__.py`(保持空)
+- `trainer_b1.py` 业务逻辑(Fix A 改了模型 forward 一侧,trainer 一侧本来就对)
 
 ---
 
@@ -77,19 +111,19 @@
 | `sparsity_schedule.py` | `cosine_sparsity_ramp` + `set_current_sparsity` — student 稀疏率 ramp |
 | `shadow_block_pool_attn.py` | 纯 PyTorch 旁路 block-pool attention,for L_block 蒸馏。**block-time causal** |
 | `lswa.py` | LSWA forward,从根 `wan_video_dit.py` `_local_spatial_attention` + `_lswa_forward` 移植 |
-| `bsa_kernel.py` | `block_sparse_attn_func` 库的薄包装。`topk_for(sparsity)` 推算 active blocks。**显式叠加时间因果掩码** |
+| `bsa_kernel.py` | `block_sparse_attn_func` 库的薄包装。`topk_for(sparsity)` 推算 active blocks。**显式叠加时间因果掩码**。**fix-G(2026-05-18)**: `_load_reference_module` 注入 `utils` shim 后再 `exec_module`,使 B200 上加载 `wan_video_dit.py` 不再报 `ModuleNotFoundError: utils` |
 
 ### 2.3 `flashvsr_b1/models/`
 | 文件 | 作用 |
 | --- | --- |
 | `flashvsr_components.py` | `FlashVSRTinyConfig` / `Causal_LQ4x_Proj` / `build_tc_decoder` / `load_flashvsr_tiny_checkpoint` |
-| `wan_dit_b1.py` | `SelfAttentionB1`(BSA / LSWA 切换 + aux 导出)+ `B1WanModel`(继承 DiffSynth WanModel,替换 self_attn 层 + `b1_forward`) |
+| `wan_dit_b1.py` | `SelfAttentionB1`(BSA / LSWA 切换 + aux 导出)+ `B1WanModel`(继承 DiffSynth WanModel,替换 self_attn 层 + `b1_forward`)。**fix-C(2026-05-18)**: `from_wan_model` 内 `cls.__new__` 后 `torch.nn.Module.__init__(b1_model)` 兜底。**fix-A(2026-05-18)**: `forward` 内 aux 聚合用 `setdefault(key, {})[layer_idx] = value`,产出 spec 形状 `{"h_out": {layer: t}, "A_blk": {layer: t}}` |
 
 ### 2.4 `flashvsr_b1/losses/`(每个文件一个 loss,< 15 行)
 | 文件 | 公式 |
 | --- | --- |
 | `output_loss.py` | Huber β=0.1 between student `x_0` and teacher `x_0` |
-| `lpips_loss.py` | LPIPS(VAE_decode(x_s_latent), GT_HR) |
+| `lpips_loss.py` | LPIPS(VAE_decode(x_s_latent), GT_HR)。**fix-E(2026-05-18)**: `_flatten_video_to_bchw` 帮手把 5D `(B,3,T,H,W)` → 4D `(B*T,3,H,W)` per-frame BCHW;5D/4D 混合时 broadcast singleton 侧;3D/6D 直接 `ValueError`(无静默 reshape) |
 | `block_kl_loss.py` | `KL(A_blk_t_detached ‖ A_blk_s)` 在全 N_blk 网格 |
 | `attn_out_loss.py` | Huber β=0.1 between student hidden out and teacher hidden out |
 
@@ -97,12 +131,12 @@
 | 文件 | 作用 |
 | --- | --- |
 | `dataset_b1.py` | 继承 `FlashVSR_LSWA/degradation/basic_vsr_dataset_hw_crop.py`,补 `aspect_bucket` / `latent_shape` / `bucket_index` |
-| `bucket_sampler.py` | `AspectRatioBucketSampler`(DDP),每 batch 内同方向(横/竖) |
+| `bucket_sampler.py` | `AspectRatioBucketSampler`(DDP),每 batch 内同方向(横/竖)。**fix-D(2026-05-18)**: chunk 单位重定义为 super-chunk = `batch_size * num_replicas`;`__iter__` 在每个 super-chunk 内按 `rank * batch_size : (rank+1) * batch_size` 切片,保证同 DDP step 所有 rank 看到同 bucket、disjoint indices。单 rank 退化为原行为 |
 
 ### 2.6 `flashvsr_b1/pipelines/`
 | 文件 | 作用 |
 | --- | --- |
-| `b1_pipeline.py` | 派生 `WanVideoPipeline`。`from_b1_config(cfg)` 加载 student + teacher(独立)+ LQ_proj + TCDecoder + LPIPS。`prepare_batch(batch)` 把 dataset 输出转换为 `(LR_latent, z_t, t_star, gt_hr)` |
+| `b1_pipeline.py` | 派生 `WanVideoPipeline`。`from_b1_config(cfg)` 加载 student + teacher(独立)+ LQ_proj + TCDecoder + LPIPS。`prepare_batch(batch)` 把 dataset 输出转换为 `(LR_latent, z_t, t_star, gt_hr)`。**fix-C(2026-05-18)**: `cls.__new__` 后 `torch.nn.Module.__init__(pipe)` 兜底;macOS-fallback `class WanVideoPipeline(torch.nn.Module)` 显式继承 `nn.Module`。**注意 Issue H**: `prepare_batch` 当前不做 1536→16 channel 适配,Wan DiT 的 patch_embedding 会拒绝 |
 
 ### 2.7 `flashvsr_b1/train/`
 | 文件 | 作用 |
@@ -156,6 +190,7 @@
 | `test_trainer_b1.py` | compute_loss assembly + LSWA 跳过 L_block + set_current_sparsity 调用条件 |
 | `test_eval_sr.py` | evaluate_checkpoint 字段聚合(stub) |
 | **`review_logic/test_review_real_logic.py`** | **非 mock 真集成测试**:b1_forward 端到端 + teacher/student 分离 + 因果 + λ 调度等 |
+| **`review_logic/test_b1_contract_gaps.py`** | **2026-05-18 新增**:B200 上首次跑 pytest 后写的 4 个 contract gap 测试。修 Fix C/B/A/D 后,3 个通过,1 个仍 fail(`test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding` = Issue H) |
 
 ---
 
@@ -290,22 +325,32 @@ eval:
   val_json: /path/to/val_samples.json                     # 20% hold-out
 ```
 
-### 4.3 跑测试(B200 上必跑)
+### 4.3 跑测试(B200 上必跑,2026-05-18 修复后期望值)
 
 ```bash
 cd $PROJECT_ROOT
 
 # 1. 全量测试
 python -m pytest tests/ -v
-# 期望:macOS 79 passed + 3 skipped → B200 应该 82 passed,0 skipped
+# 期望(post-fix HEAD = a658777):
+#   macOS:   85 passed / 3 skipped / 1 failed   (1 failed = Issue H 架构问题, 见 §8.9)
+#   B200:    88 passed / 0 skipped / 1 failed   (3 个 CUDA + LPIPS gated 测试跑起来)
+# 若 B200 出现 > 1 个 failure 或 ImportError, 立即停止并对照 §0.1 表格定位
 
-# 2. 重点验证 macOS 上 skipped 的 3 个
+# 2. 重点验证 macOS 上 skipped 的 3 个(B200 上必须 PASS)
 python -m pytest tests/test_bsa_kernel.py::test_bsa_forward_shape -v
 python -m pytest tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation -v
 python -m pytest tests/test_losses.py::test_L_lpips_shape -v
+# 全部应 PASS。若 test_L_lpips_shape 仍报 5D shape error, 检查 commit a658777 是否真的 pulled
 
-# 3. 真集成测试(非 mock)
-python -m pytest tests/review_logic/test_review_real_logic.py -v
+# 3. 真集成测试(非 mock,含 2026-05-18 新增的 contract gap 测试)
+python -m pytest tests/review_logic/ -v
+# 期望: 22 passed / 1 failed (test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding = Issue H)
+
+# 4. DDP 桶同步专项(2026-05-18 修复 D 后必跑)
+python -m pytest tests/test_bucket_sampler.py -v \
+    tests/review_logic/test_b1_contract_gaps.py::test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks
+# 期望: 5 passed. 修复前会因 NCCL shape mismatch 阻塞训练第一步, 这是训练前必过的回归测试
 ```
 
 ### 4.4 单卡 smoke(20 step)
@@ -391,20 +436,21 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 
 ---
 
-## 6. B200 启动训练前必跑的 6 项验证
+## 6. B200 启动训练前必跑的 7 项验证(post-2026-05-18-fix 调整)
 
 | # | 检查项 | 命令 | 预期 |
 | --- | --- | --- | --- |
 | V1 | `block_sparse_attn` 库可 import + sm_100 兼容 | `python -c "from block_sparse_attn import block_sparse_attn_func; print('OK')"` | 输出 `OK`,无 CUDA arch 警告 |
-| V2 | BSA 形状测试 | `pytest tests/test_bsa_kernel.py::test_bsa_forward_shape -v` | PASS |
-| V3 | BSA parity vs root | `pytest tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation -v` | PASS。若失败,检查 `kv_len` / `local_range` 是否需要按 reference 实际值调整 |
-| V4 | DDP 桶序一致性 | `torchrun --nproc_per_node=2 -m pytest tests/test_bucket_sampler.py::test_ddp_ranks_disjoint_and_complete -v` | PASS |
-| V5 | 单卡 smoke 20 step | `bash scripts/10_smoke_one_step.sh flashvsr_b1/configs/b1_bsa90.yaml` | 不 OOM;`log.txt` ≥ 8 行;`ckpt/step_*.pt` 落地 |
-| V6 | 真 ckpt 加载 + 一次完整 forward | 同上 smoke,观察第一行 step 是否 < 30s(冷启动后) | 不 crash,teacher + student state_dict 加载完整 |
+| V2 | BSA 形状测试 | `pytest tests/test_bsa_kernel.py::test_bsa_forward_shape -v` | PASS(fix-G 后 utils shim 注入,不再 ModuleNotFoundError) |
+| V3 | BSA parity vs root | `pytest tests/test_bsa_kernel.py::test_bsa_parity_with_root_implementation -v` | PASS(fix-F 后路径 portable)。若失败,检查 `kv_len` / `local_range` 是否需要按 reference 实际值调整 |
+| V4 | **DDP 桶 super-chunk 同步**(强化) | `python -m pytest tests/test_bucket_sampler.py tests/review_logic/test_b1_contract_gaps.py::test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks -v` | 5 PASS。**fix-D 前** rank0/rank1 在同步骤拿到不同 bucket,会 NCCL hang。本次回归测试用 3 rank 同时检查 disjoint + 同 bucket |
+| V5 | LPIPS 5D shape | `python -m pytest tests/test_losses.py::test_L_lpips_shape -v` | PASS(fix-E)。若失败,检查 `L_lpips` 是否真的 import 的是 commit `9586541` 之后的版本 |
+| V6 | 单卡 smoke 20 step | `bash scripts/10_smoke_one_step.sh flashvsr_b1/configs/b1_bsa90.yaml` | **当前会因 Issue H 报通道不匹配崩溃** ⚠️ —— 训练前必须完成 Issue H 设计与实现。完成后:不 OOM;`log.txt` ≥ 8 行;`ckpt/step_*.pt` 落地 |
+| V7 | 真 ckpt 加载 + 一次完整 forward | 同 V6 smoke,观察第一行 step 是否 < 30s(冷启动后) | 不 crash,teacher + student state_dict 加载完整。**前置依赖 Issue H 完成** |
 
 ---
 
-## 7. 操作员必须补的 4 项实现
+## 7. 操作员必须补的 5 项实现(O5 = Issue H, 训练前必做)
 
 | # | 项目 | 位置 | 任务 |
 | --- | --- | --- | --- |
@@ -412,6 +458,7 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 | O2 | `_measure_fps` 真实实现 | `eval/eval_sr.py:_measure_fps` | warmup 5 chunk → 稳态 FPS@720p / 1080p。`torch.cuda.synchronize` + `time.perf_counter` |
 | O3 | 真 TCDecoder ckpt 路径 | `flashvsr_b1/configs/b1_*.yaml:tc_decoder_ckpt` | 默认 `build_tc_decoder(None)` 返回 identity stub,导致 `L_lpips(latent, hr)` shape 不匹配。**必须填真路径** |
 | O4 | grad checkpoint 开关 | `flashvsr_b1/train/trainer_b1.py` | `B1WanModel.forward` 已 `del use_gradient_checkpointing`(故意丢弃)。如果 OOM,手动改 trainer 在 forward 内 wrap `torch.utils.checkpoint.checkpoint` |
+| **O5** | **Issue H: lq_proj → Wan DiT 通道适配** | `b1_pipeline.prepare_batch` + `wan_dit_b1.b1_forward` | **训练前必做**。当前 prepare_batch 返回 `LR_latent` shape `(B, 1536, T, H, W)` 当作 `z_t` 加进 patch_embedding(期望 16 通道)。正确路径需要:① z_t 改为 VAE 编码的 HR latent (16 ch),② LR_latent (1536 ch) 在 DiT 内部 feature dim 处通过 cross-attn / 残差注入,不是 `+`。这是 spec §2 流程图的细化:`embed(LR_latent) ⊕ embed(z_t)` 中 `⊕` 不能简单理解为通道相加。需要先确认 task_b1.md / FlashVSR 原版的具体注入位置 |
 
 ---
 
@@ -425,6 +472,7 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 6. **Shadow attention 计算开销**:6 个 distill 层,每层一次 `[B,H,1320,1320]` softmax。fp32 下大概 60 MB / 层,360 MB 累积。bf16 autocast 下 shadow 内部 softmax 仍是 fp32(避免数值不稳),开销不变。
 7. **DiffSynth `redirect_common_files`** 默认 False;如果内网 ckpt 路径是 huggingface 风格,可能需要置 True。
 8. **Dataset 父类 `imgs` 字段假设**:`DatasetB1.__init__` 利用 `self.imgs` 做 bucket_index 预扫描(LSWA 父类 `BasicVSRDataset_hw_crop:179` 验证存在)。如果父类未来重命名,需要同步改 dataset_b1.py。
+9. **【NEW 2026-05-18】Issue H — lq_proj 1536 通道 vs Wan DiT in_dim 16 通道不匹配**(参见 §0.1 H 行 + §7 O5):`b1_forward` 当前做 `x = z_t + LR_latent` 然后送 `self.forward(x, ...)`,内部 `self.patchify(x)` 走 patch_embed (Conv3d in_channels=16) → 1536 通道输入会 shape mismatch。试图用 silent channel reduce 绕过等于把契约测试糊掉,已禁止。**正确路径需要重新读 task_b1.md §2 line 121-148 的伪代码 `x = embed(LR_latent) ⊕ embed(z_t) ⊕ time_embed(t_star)`**,确认 `embed` 是什么操作(很可能 LR_latent 和 z_t 在 DiT 内部 feature dim 1536 处合流,而不是在 raw latent 16 维度合流)。在下一批次解决前,V6 / V7 必然崩。
 
 ---
 
@@ -441,8 +489,13 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 | `L_lpips` shape mismatch | `tc_decoder` 是 stub | 填 `tc_decoder_ckpt` |
 | `eval/eval_sr.py` NotImplementedError | operator 没补 `_evaluate_one_video` | 实现它(见 §7 O1)|
 | jsonl 文件没数据 | log_every_steps 没到 | rank-0 才写,确认是 rank-0;`log_every_steps=50` 默认,可改小 |
-| Bucket sampler 跨 rank 不一致 | 父 dataset 内有 rank-local 随机 | 在第一个 step 之后插 `assert all_ranks_agree(dataset.bucket_index_hash)` |
+| Bucket sampler 跨 rank 不一致 | 父 dataset 内有 rank-local 随机 | 在第一个 step 之后插 `assert all_ranks_agree(dataset.bucket_index_hash)`。**2026-05-18 fix-D 后已经在 sampler 层保证 super-chunk 同 bucket**,只剩父 dataset 引入随机这个上游可能性 |
 | 第一次 forward 极慢(> 5 min) | DiffSynth 重新下载 common files | 设 `cfg.redirect_common_files: False` + 检查内网 cache 路径 |
+| `RuntimeError: Given groups=1, expected weight to be ... Conv3d input with X channels` 或 patch_embed shape mismatch | **Issue H** 仍未修(O5) | 不要试图静默 channel reduce。完成 §7 O5 设计与实现后再 retry |
+| `KeyError: 'h_out'` 在 trainer.compute_loss | 跑的是 pre-fix-A 的代码 | `git pull` 到 ≥ `2ca6194`;模型 forward 现在用 `setdefault(key, {})[layer_idx] = value` 聚合 |
+| NCCL `AllReduce` shape mismatch / hang 在第一个 step | bucket sampler 跨 rank 不同步 | `git pull` 到 ≥ `65b5c62` 包含 fix-D 的 super-chunk 实现 |
+| `ModuleNotFoundError: No module named 'utils'` 在 bsa_kernel 加载 wan_video_dit | 跑的是 pre-fix-G 的代码 | `git pull` 到 ≥ `a658777`,`_load_reference_module` 注入 utils shim |
+| `FileNotFoundError: ...wan_video_dit.py` | 测试用了 macOS 绝对路径 | `git pull` 到 ≥ `a658777` 后路径已经 portable;如果项目根没有 wan_video_dit.py,测试会 `pytest.skip` 而不是 fail |
 
 ---
 
@@ -462,10 +515,19 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 
 - 代码 commit history:`git log --oneline` 看修改时间线
 - 设计决策:`task_b1.md §0` 决策表
-- 任务追踪报告:`logs/<YYYYMMDD>-task<N>-*.md`
-- Critical fix 记录:`logs/20260517-critical-fixes.md`
-- 集成 review:`tests/review_logic/test_review_real_logic.py`
+- 任务追踪报告(17 项原子任务):`logs/<YYYYMMDD>-task<N>-*.md`
+- 2026-05-17 critical fix 记录:`logs/20260517-critical-fixes.md`
+- **2026-05-18 B200-回流的 6 项修复(本批次)**,逐项 commit + log:
+  - `logs/20260518-fix-c-module-init.md` ↔ commit `7433f31`
+  - `logs/20260518-fix-b-bsa-grid-test.md` ↔ commit `0b2e444`
+  - `logs/20260518-fix-a-aux-shape.md` ↔ commit `2ca6194`
+  - `logs/20260518-fix-d-bucket-sampler-ddp.md` ↔ commit `65b5c62`
+  - `logs/20260518-fix-e-lpips-5d.md` ↔ commit `9586541`
+  - `logs/20260518-fix-fg-paths-and-shim.md` ↔ commit `a658777`
+- 待办(下一批次):**Issue H** — `prepare_batch / b1_forward` 1536→16 通道适配设计与实现(O5)
+- B200 操作员首次报错原始记录:`内网B200 pytest报错.txt`
+- 集成 review:`tests/review_logic/test_review_real_logic.py` + `tests/review_logic/test_b1_contract_gaps.py`
 
-遇到 spec 上未覆盖的决策点:先查 `task_b1.md`,再查 plan,最后 fallback 到本指南 §8 已知遗留风险。
+遇到 spec 上未覆盖的决策点:先查 `task_b1.md`,再查 plan,然后查本指南 §0.1(2026-05-18 修复批次)+ §8 已知遗留风险,最后 fallback 到 logs。
 
 **文档结束**。
