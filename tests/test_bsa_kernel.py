@@ -42,12 +42,28 @@ def test_bsa_parity_with_root_implementation():
     corresponding to 85% sparsity, run _block_sparse_forward, compare with
     bsa_forward output (same Q/K/V, same seed, same block_size). atol=1e-4.
     """
-    import importlib.util, sys
-    REF_PATH = "/Users/zonghuiliu/Documents/Codex/VideoGen/FlashVSR_Attention_Map_Distillation/wan_video_dit.py"
+    import importlib.util, sys, types
+    from pathlib import Path
+    REF_PATH = Path(__file__).resolve().parents[1] / "wan_video_dit.py"
+    if not REF_PATH.exists():
+        pytest.skip(f"wan_video_dit.py reference not present at {REF_PATH}")
     spec = importlib.util.spec_from_file_location("ref_wan_video_dit", REF_PATH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules.setdefault("ref_wan_video_dit", mod)
-    spec.loader.exec_module(mod)
+    # wan_video_dit.py has `from .utils import hash_state_dict_keys` and falls
+    # back to `from utils import hash_state_dict_keys` outside a package; we
+    # only need the import to succeed, so stub it (same pattern as test_lswa.py).
+    old_utils = sys.modules.get("utils")
+    shim = types.ModuleType("utils")
+    shim.hash_state_dict_keys = lambda state_dict: state_dict
+    sys.modules["utils"] = shim
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if old_utils is None:
+            sys.modules.pop("utils", None)
+        else:
+            sys.modules["utils"] = old_utils
 
     torch.manual_seed(0)
     B, f, h, w = 1, 22, 16, 16

@@ -1,13 +1,19 @@
 import importlib.util
+from pathlib import Path
 import sys
 import types
+
+REF_PATH = Path(__file__).resolve().parents[1] / "wan_video_dit.py"
+if not REF_PATH.exists():
+    import pytest
+    pytest.skip(
+        f"wan_video_dit.py reference not present at {REF_PATH} — parity test cannot run",
+        allow_module_level=True,
+    )
 
 import torch
 
 from flashvsr_b1.attn.lswa import lswa_forward
-
-
-REF_PATH = "/Users/zonghuiliu/Documents/Codex/VideoGen/FlashVSR_Attention_Map_Distillation/wan_video_dit.py"
 
 
 def _load_ref_module():

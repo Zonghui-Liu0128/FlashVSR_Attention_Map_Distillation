@@ -23,12 +23,29 @@ def topk_for(sparsity: float, total_kv_blocks: int) -> int:
 
 @lru_cache(maxsize=1)
 def _load_reference_module():
+    import types
+
     spec = importlib.util.spec_from_file_location(_REF_MODULE_NAME, _REF_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load FlashVSR reference module at {_REF_PATH}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules.setdefault(_REF_MODULE_NAME, mod)
-    spec.loader.exec_module(mod)
+
+    # wan_video_dit.py's `from .utils import hash_state_dict_keys` (and the
+    # `from utils import ...` fallback) needs a `utils` module visible in
+    # sys.modules. We only need the symbol to exist; nothing inside the
+    # reference file actually uses hash_state_dict_keys at module-load time.
+    old_utils = sys.modules.get("utils")
+    shim = types.ModuleType("utils")
+    shim.hash_state_dict_keys = lambda state_dict: state_dict
+    sys.modules["utils"] = shim
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if old_utils is None:
+            sys.modules.pop("utils", None)
+        else:
+            sys.modules["utils"] = old_utils
     return mod
 
 
