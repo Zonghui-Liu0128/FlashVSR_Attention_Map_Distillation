@@ -21,6 +21,21 @@ class DatasetB1(BasicVSRDataset_hw_crop):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         item = super().__getitem__(idx)
+        # LSWA parent (`degradation/basic_vsr_dataset_hw_crop.py:266-273`) returns
+        #   `aigc_input` — degraded LR tensor upsampled to GT size (3, T, H, W)
+        #   `read_input` — HR/GT tensor (3, T, H, W)
+        # Both are at HR pixel resolution. Re-key to `lr` / `hr` for the
+        # `B1Pipeline.prepare_batch` contract. The `not in` guards keep this
+        # compatible with mock fixtures that provide `lr` / `hr` directly.
+        if "lr" not in item and "aigc_input" in item:
+            item["lr"] = item["aigc_input"]
+        if "hr" not in item and "read_input" in item:
+            item["hr"] = item["read_input"]
+        if "lr" not in item:
+            raise KeyError(
+                f"DatasetB1 expected 'lr' (or 'aigc_input') in parent item; "
+                f"got keys: {sorted(item.keys())}"
+            )
         h, w = item["lr"].shape[-2:]
         landscape = w > h
         item["aspect_bucket"] = "landscape" if landscape else "portrait"
