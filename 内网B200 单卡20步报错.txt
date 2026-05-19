@@ -2,23 +2,40 @@
 Traceback (most recent call last):
   File "<frozen runpy>", line 198, in _run_module_as_main
   File "<frozen runpy>", line 88, in _run_code
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 435, in <module>
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 442, in <module>
     train_main(args.config, args.overrides)
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 413, in train_main
-    trainer.training_step(batch, step)
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 219, in training_step
-    loss, loss_dict = self.compute_loss(batch, step)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 184, in compute_loss
-    x_t, aux_t = self._forward_model(self.teacher, LR_latent, z_t, t_star)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 166, in _forward_model
-    return model.b1_forward(LR_latent, z_t, t_star, return_aux=True)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 274, in b1_forward
-    return self.forward(
-           ^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 362, in forward
-    x, (f, h, w) = self.patchify(x)
-    ^^^^^^^^^^^^
-ValueError: not enough values to unpack (expected 2, got 1)
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 411, in train_main
+    for batch in dl:
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 741, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1548, in _next_data
+    return self._process_data(data, worker_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/dataloader.py", line 1586, in _process_data
+    data.reraise()
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/_utils.py", line 785, in reraise
+    raise exception
+RuntimeError: Caught RuntimeError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 358, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 54, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 54, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+            ~~~~~~~~~~~~^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/data/dataset_b1.py", line 23, in __getitem__
+    item = super().__getitem__(idx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/data/degradation/basic_vsr_dataset_hw_crop.py", line 191, in __getitem__
+    return self._get_item_from_metadata_sample(sample)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/data/degradation/basic_vsr_dataset_hw_crop.py", line 228, in _get_item_from_metadata_sample
+    clean_bgr_full = self._read_video_clip_cv2(path, clip_start, frame_num)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/data/degradation/basic_vsr_dataset_hw_crop.py", line 209, in _read_video_clip_cv2
+    raise RuntimeError(f"Decode failed: path={path}, frame={start_frame + i}")
+RuntimeError: Decode failed: path=/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4, frame=330
