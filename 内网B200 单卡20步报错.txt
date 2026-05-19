@@ -2,47 +2,44 @@
 Traceback (most recent call last):
   File "<frozen runpy>", line 198, in _run_module_as_main
   File "<frozen runpy>", line 88, in _run_code
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 435, in <module>
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 442, in <module>
     train_main(args.config, args.overrides)
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 413, in train_main
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 419, in train_main
     trainer.training_step(batch, step)
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 219, in training_step
     loss, loss_dict = self.compute_loss(batch, step)
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 172, in compute_loss
-    LR_latent, z_t, t_star, gt_hr = self.prepare_batch(batch)
-                                    ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 161, in prepare_batch
-    return self.pipeline.prepare_batch(batch)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/pipelines/b1_pipeline.py", line 227, in prepare_batch
-    lr_tokens = self.lq_proj(lr_rgb)
-                ^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 187, in compute_loss
+    x_s, aux_s = self._forward_model(self.student, LR_latent, z_t, t_star)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 166, in _forward_model
+    return model.b1_forward(LR_latent, z_t, t_star, return_aux=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 282, in b1_forward
+    return self.forward(
+           ^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 397, in forward
+    x, aux = self._forward_block_b1(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 345, in _forward_block_b1
+    x = block.gate(x, gate_mlp, block.ffn(input_x))
+                                ^^^^^^^^^^^^^^^^^^
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
     return self._call_impl(*args, **kwargs)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
     return forward_call(*args, **kwargs)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/flashvsr_components.py", line 131, in forward
-    out_x = self._forward_features(x)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/flashvsr_components.py", line 116, in _forward_features
-    x = self.conv1(x, self.cache["conv1"])
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+            ^^^^^^^^^^^^^
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
     return self._call_impl(*args, **kwargs)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
     return forward_call(*args, **kwargs)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/flashvsr_components.py", line 57, in forward
-    return super().forward(x)
-           ^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/conv.py", line 723, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/conv.py", line 718, in _conv_forward
-    return F.conv3d(
-           ^^^^^^^^^
-RuntimeError: Given groups=1, weight of size [2048, 768, 4, 3, 3], expected input[1, 21760, 6, 66, 122] to have 768 channels, but got 21760 channels instead
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/activation.py", line 816, in forward
+    return F.gelu(input, approximate=self.approximate)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.82 GiB. GPU 0 has a total capacity of 178.35 GiB of which 1.32 GiB is free. Process 1257645 has 29.36 GiB memory in use. Process 1875390 has 7.57 GiB memory in use. Including non-PyTorch memory, this process has 140.04 GiB memory in use. Of the allocated memory 137.71 GiB is allocated by PyTorch, and 1.55 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
