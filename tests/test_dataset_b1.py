@@ -40,7 +40,7 @@ def test_landscape_bucket_and_latent_shape():
     with patch.object(DatasetB1, "__init__", lambda self, *a, **k: None), patch.object(
         DatasetB1.__bases__[0],
         "__getitem__",
-        lambda self, idx: _fake_parent_item(1024, 1920),
+        lambda self, idx: _fake_parent_item(16, 32),
     ):
         ds = DatasetB1()
         item = ds[0]
@@ -52,7 +52,7 @@ def test_portrait_bucket_and_latent_shape():
     with patch.object(DatasetB1, "__init__", lambda self, *a, **k: None), patch.object(
         DatasetB1.__bases__[0],
         "__getitem__",
-        lambda self, idx: _fake_parent_item(1920, 1024),
+        lambda self, idx: _fake_parent_item(32, 16),
     ):
         ds = DatasetB1()
         item = ds[0]
@@ -64,9 +64,37 @@ def test_parent_fields_preserved():
     with patch.object(DatasetB1, "__init__", lambda self, *a, **k: None), patch.object(
         DatasetB1.__bases__[0],
         "__getitem__",
-        lambda self, idx: _fake_parent_item(1024, 1920),
+        lambda self, idx: _fake_parent_item(16, 32),
     ):
         ds = DatasetB1()
         item = ds[0]
         for k in ["lr", "hr", "sample_meta", "degradation_meta", "data_name"]:
             assert k in item
+
+
+def test_real_parent_tchw_zero_one_video_is_normalized_to_flashvsr_contract():
+    parent_item = {
+        "aigc_input": torch.tensor(
+            [
+                [[[0.0, 0.5], [1.0, 0.25]], [[0.5, 1.0], [0.0, 0.75]], [[1.0, 0.0], [0.5, 0.25]]],
+                [[[0.25, 0.75], [0.5, 1.0]], [[1.0, 0.5], [0.25, 0.0]], [[0.0, 0.25], [0.75, 1.0]]],
+            ]
+        ),
+        "read_input": torch.ones(2, 3, 2, 2),
+        "sample_meta": {},
+        "degradation_meta": {},
+        "data_name": "dummy.mp4",
+    }
+    with patch.object(DatasetB1, "__init__", lambda self, *a, **k: None), patch.object(
+        DatasetB1.__bases__[0],
+        "__getitem__",
+        lambda self, idx: parent_item,
+    ):
+        ds = DatasetB1()
+        item = ds[0]
+
+    assert item["lr"].shape == (3, 2, 2, 2)
+    assert item["hr"].shape == (3, 2, 2, 2)
+    assert torch.allclose(item["lr"], parent_item["aigc_input"].permute(1, 0, 2, 3).mul(2).sub(1))
+    assert item["lr"].amin().item() == -1.0
+    assert item["lr"].amax().item() == 1.0

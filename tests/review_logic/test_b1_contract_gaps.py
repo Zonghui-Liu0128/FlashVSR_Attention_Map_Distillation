@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -149,6 +150,77 @@ def test_prepare_batch_outputs_channels_accepted_by_wan_patch_embedding():
     assert z_t.shape[2:] == expected_pre_patch, (
         f"z_t spatial shape {z_t.shape[2:]} != expected {expected_pre_patch}"
     )
+
+
+def test_prepare_batch_passes_bcthw_rgb_to_lq_proj():
+    """FlashVSR's LQ_proj input contract is B,C,F,H,W."""
+    from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
+    from flashvsr_b1.pipelines.b1_pipeline import B1Pipeline
+
+    cfg = FlashVSRTinyConfig.default()
+
+    class SpyLQProj(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen_shape = None
+
+        def forward(self, lr_rgb):
+            self.seen_shape = tuple(lr_rgb.shape)
+            return torch.zeros(lr_rgb.shape[0], cfg.dim, 1, dtype=lr_rgb.dtype, device=lr_rgb.device)
+
+    class FakeDit(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.in_dim = cfg.in_dim
+            self.patch_size = cfg.patch_size
+
+    pipe = B1Pipeline.__new__(B1Pipeline)
+    torch.nn.Module.__init__(pipe)
+    pipe.dit = FakeDit()
+    pipe.lq_proj = SpyLQProj()
+    pipe.cfg_single_step_t = 999
+
+    batch = {
+        "lr": torch.zeros(1, 3, 5, 16, 16),
+        "hr": torch.zeros(1, 3, 5, 16, 16),
+        "latent_shape": (1, 1, 1),
+    }
+    _, _, _, hr = B1Pipeline.prepare_batch(pipe, batch)
+
+    assert pipe.lq_proj.seen_shape == (1, 3, 5, 16, 16)
+    assert hr.shape == (1, 3, 5, 16, 16)
+
+
+def test_prepare_batch_rejects_btchw_before_conv3d_channel_error():
+    """BTCHW would make frame count look like channels; fail at pipeline boundary."""
+    from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
+    from flashvsr_b1.pipelines.b1_pipeline import B1Pipeline
+
+    cfg = FlashVSRTinyConfig.default()
+
+    class FakeLQProj(nn.Module):
+        def forward(self, lr_rgb):
+            return torch.zeros(lr_rgb.shape[0], cfg.dim, 1, dtype=lr_rgb.dtype, device=lr_rgb.device)
+
+    class FakeDit(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.in_dim = cfg.in_dim
+            self.patch_size = cfg.patch_size
+
+    pipe = B1Pipeline.__new__(B1Pipeline)
+    torch.nn.Module.__init__(pipe)
+    pipe.dit = FakeDit()
+    pipe.lq_proj = FakeLQProj()
+    pipe.cfg_single_step_t = 999
+
+    batch = {
+        "lr": torch.zeros(1, 5, 3, 16, 16),
+        "hr": torch.zeros(1, 5, 3, 16, 16),
+        "latent_shape": (1, 1, 1),
+    }
+    with pytest.raises(ValueError, match="BCTHW"):
+        B1Pipeline.prepare_batch(pipe, batch)
 
 
 def test_bucket_sampler_keeps_bucket_choice_synchronized_across_ranks():

@@ -68,6 +68,15 @@ def _module_device(model) -> torch.device:
     return torch.device("cpu")
 
 
+def _require_bcthw_rgb(video: torch.Tensor, name: str) -> torch.Tensor:
+    if video.ndim != 5 or video.shape[1] != 3:
+        raise ValueError(
+            f"{name} must be BCTHW RGB video matching FlashVSR input contract; "
+            f"got shape={tuple(video.shape)}"
+        )
+    return video.contiguous()
+
+
 def _build_lpips_net():
     try:
         import lpips
@@ -217,8 +226,8 @@ class B1Pipeline(WanVideoPipeline):
             hr_rgb (Tensor): ground-truth HR pixels for L_lpips.
         """
         device = self.dit_device()
-        lr_rgb = batch["lr"].to(device)
-        hr_rgb = batch["hr"].to(device)
+        lr_rgb = _require_bcthw_rgb(batch["lr"].to(device), "batch['lr']")
+        hr_rgb = _require_bcthw_rgb(batch["hr"].to(device), "batch['hr']")
         self.lq_proj.to(device)
 
         # Step 1: project LR pixels to DiT-inner-dim tokens.
