@@ -230,10 +230,28 @@ class B1Pipeline(WanVideoPipeline):
         hr_rgb = _require_bcthw_rgb(batch["hr"].to(device), "batch['hr']")
         self.lq_proj.to(device)
 
+        token_grid = batch.get("latent_shape", None)
+        if token_grid is None:
+            raise ValueError(
+                "prepare_batch requires batch['latent_shape'] (post-patch token grid)"
+            )
+        if isinstance(token_grid, torch.Tensor):
+            token_grid = token_grid.tolist()
+        if isinstance(token_grid, (list, tuple)) and token_grid and isinstance(token_grid[0], (list, tuple)):
+            token_grid = token_grid[0]
+        token_grid = tuple(int(v) for v in token_grid)
+
         # Step 1: project LR pixels to DiT-inner-dim tokens.
         # Causal_LQ4x_Proj returns (B, 1536, N) for layer_num=1 or
         # (B, 1536, layer_num, N) for layer_num>1. Normalize to upstream list contract.
-        lr_tokens = self.lq_proj(lr_rgb)
+        # FlashVSR v1.1 feeds LQ_proj_in a four-frame tail buffer. Those frames
+        # are not training targets; they make projector cache semantics align
+        # with Wan VAE/DiT's 85 effective frames -> 22 latent-frame contract.
+        lr_rgb_for_lq_proj = torch.cat(
+            [lr_rgb, lr_rgb[:, :, -1:, :, :].repeat(1, 1, 4, 1, 1)],
+            dim=2,
+        ).contiguous()
+        lr_tokens = self.lq_proj(lr_rgb_for_lq_proj)
         if lr_tokens.ndim == 3:
             # layer_num=1: (B, 1536, N) -> list[(B, N, 1536)]
             LR_latents = [lr_tokens.transpose(1, 2).contiguous()]
@@ -249,22 +267,20 @@ class B1Pipeline(WanVideoPipeline):
                 f"{tuple(lr_tokens.shape)}); expected 3D or 4D - see "
                 f"Causal_LQ4x_Proj.forward in flashvsr_components.py:135-140"
             )
+        expected_tokens = token_grid[0] * token_grid[1] * token_grid[2]
+        for i, lr_tok in enumerate(LR_latents):
+            if lr_tok.shape[1] != expected_tokens:
+                raise ValueError(
+                    f"LR_latents[{i}] token count {lr_tok.shape[1]} != DiT token "
+                    f"count {expected_tokens}; lr_rgb={tuple(lr_rgb.shape)}, "
+                    f"lr_rgb_for_lq_proj={tuple(lr_rgb_for_lq_proj.shape)}, "
+                    f"token_grid={token_grid}"
+                )
 
         # Step 2: build noisy 16-channel VAE-latent z_t at the pre-patch shape.
         # batch["latent_shape"] is the POST-patch token grid (e.g. (22,64,120)
         # for landscape) per dataset_b1.py:32 + Fix B clarification. Multiply by
         # dit.patch_size to recover the pre-patch latent shape.
-        token_grid = batch.get("latent_shape", None)
-        if token_grid is None:
-            raise ValueError(
-                "prepare_batch requires batch['latent_shape'] (post-patch token grid)"
-            )
-        if isinstance(token_grid, torch.Tensor):
-            token_grid = token_grid.tolist()
-        if isinstance(token_grid, (list, tuple)) and token_grid and isinstance(token_grid[0], (list, tuple)):
-            token_grid = token_grid[0]
-        token_grid = tuple(int(v) for v in token_grid)
-
         patch_size = tuple(int(p) for p in getattr(self.dit, "patch_size", (1, 2, 2)))
         if len(patch_size) != 3 or len(token_grid) != 3:
             raise ValueError(
