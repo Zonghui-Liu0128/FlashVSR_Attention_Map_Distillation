@@ -9,9 +9,15 @@ if [[ $# -gt 0 ]]; then
 fi
 
 EXTRA_FLAGS=(
-  train.total_steps=20
-  logging.log_every_steps=2
-  logging.ckpt_every_steps=10
+  train.total_steps=${TOTAL_STEPS:-2}
+  data.max_samples=${MAX_SAMPLES:-16}
+  data.shuffle_samples=false
+  data.num_workers=${NUM_WORKERS:-0}
+  data.max_retry=1
+  logging.log_every_steps=1
+  logging.ckpt_every_steps=0
+  logging.save_final=false
+  eval.every_steps=0
 )
 
 python -m flashvsr_b1.train.trainer_b1 --config "$CONFIG" "${EXTRA_FLAGS[@]}" "$@"

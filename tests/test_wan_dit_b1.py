@@ -100,3 +100,33 @@ def test_b1_forward_rejects_tensor_LR_latents():
     bad_LR_latent = torch.randn(1, 8, 1536)  # tensor, not list
     with pytest.raises(ValueError, match="list"):
         stub.b1_forward(bad_LR_latent, z_t, torch.tensor(999))
+
+
+def test_b1_forward_handles_diffsynth_patchify_tensor_contract():
+    """DiffSynth's vendored WanModel.patchify returns only a 5D tensor.
+
+    B1WanModel.forward must adapt that contract by deriving the token grid and
+    flattening to (B, N, dim) before entering the block loop.
+    """
+    model = B1WanModel(
+        dim=12,
+        in_dim=2,
+        ffn_dim=24,
+        out_dim=2,
+        text_dim=4096,
+        freq_dim=8,
+        eps=1e-6,
+        patch_size=(1, 2, 2),
+        num_heads=3,
+        num_layers=0,
+        has_image_input=False,
+        distill_layers=[],
+    )
+
+    z_t = torch.randn(1, 2, 2, 4, 4)
+    LR_latents = [torch.zeros(1, 8, 12)]
+
+    out, aux = model.b1_forward(LR_latents, z_t, torch.tensor(999), return_aux=True)
+
+    assert out.shape == z_t.shape
+    assert aux == {}

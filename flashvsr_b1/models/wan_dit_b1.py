@@ -359,7 +359,14 @@ class B1WanModel(wan_video_dit.WanModel):
             clip_embedding = self.img_emb(clip_feature)
             context = torch.cat([clip_embedding, context], dim=1)
 
-        x, (f, h, w) = self.patchify(x)
+        patchified = self.patchify(x)
+        if isinstance(patchified, tuple):
+            x, grid_size = patchified
+            f, h, w = tuple(int(v) for v in grid_size)
+        else:
+            x = patchified
+            f, h, w = tuple(int(v) for v in x.shape[2:])
+            x = x.flatten(2).transpose(1, 2).contiguous()
         freqs = torch.cat(
             [
                 self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),

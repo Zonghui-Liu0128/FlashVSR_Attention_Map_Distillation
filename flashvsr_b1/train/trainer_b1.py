@@ -275,11 +275,16 @@ def build_dataloader(cfg):
     from flashvsr_b1.data.dataset_b1 import DatasetB1
 
     OmegaConf = _require_omegaconf()
-    data_cfg_path = _cfg_get(
-        _cfg_get(cfg, "data", {}), "cfg", "flashvsr_b1/configs/data_b1.yaml"
-    )
+    data_cfg_runtime = _cfg_get(cfg, "data", {})
+    data_cfg_path = _cfg_get(data_cfg_runtime, "cfg", "flashvsr_b1/configs/data_b1.yaml")
     data_cfg = OmegaConf.load(data_cfg_path)
-    dataset = DatasetB1(OmegaConf.to_container(data_cfg, resolve=True))
+    data_cfg_dict = OmegaConf.to_container(data_cfg, resolve=True)
+    runtime_overrides = _to_plain_container(data_cfg_runtime) or {}
+    dataloader_keys = {"cfg", "buckets", "num_workers", "prefetch_factor"}
+    for key, value in runtime_overrides.items():
+        if key not in dataloader_keys:
+            data_cfg_dict[key] = value
+    dataset = DatasetB1(data_cfg_dict)
     rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
     world_size = dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
     train_cfg = _cfg_get(cfg, "train", {})
@@ -291,7 +296,6 @@ def build_dataloader(cfg):
         batch_size=batch_size,
         seed=int(_cfg_get(train_cfg, "seed", 42)),
     )
-    data_cfg_runtime = _cfg_get(cfg, "data", {})
     num_workers = int(_cfg_get(data_cfg_runtime, "num_workers", 8))
     kwargs = {}
     if num_workers > 0:
@@ -383,7 +387,9 @@ def train_main(config_path: str, overrides: list[str] | None = None):
 
     dl = build_dataloader(cfg)
     total_steps = int(_cfg_get(train_cfg, "total_steps", 20000))
-    ckpt_every = int(_cfg_get(_cfg_get(cfg, "logging", {}), "ckpt_every_steps", 2000))
+    logging_cfg = _cfg_get(cfg, "logging", {})
+    ckpt_every = int(_cfg_get(logging_cfg, "ckpt_every_steps", 2000))
+    save_final = bool(_cfg_get(logging_cfg, "save_final", True))
     eval_every = int(_cfg_get(_cfg_get(cfg, "eval", {}), "every_steps", 1000))
     precision = str(_cfg_get(train_cfg, "precision", "bf16"))
 
@@ -412,13 +418,14 @@ def train_main(config_path: str, overrides: list[str] | None = None):
                 with ctx:
                     trainer.training_step(batch, step)
                 step += 1
-                if step % ckpt_every == 0:
+                if ckpt_every > 0 and step % ckpt_every == 0:
                     trainer.save_checkpoint(step)
                 if eval_every > 0 and step % eval_every == 0:
                     _maybe_eval(trainer, cfg, step)
             epoch += 1
 
-        trainer.save_checkpoint(step)
+        if save_final:
+            trainer.save_checkpoint(step)
     finally:
         trainer.metrics.close()
         if dist.is_available() and dist.is_initialized():

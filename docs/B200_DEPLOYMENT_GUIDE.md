@@ -1,12 +1,12 @@
 # FlashVSR Plan B1 — B200 部署与验证指南
 
-> 适用代码:HEAD = 当前 `main`(post **2026-05-18 八项 B200 关键修复 + 架构级 Fix H + 2026-05-19 FlashVSR 输入契约修复**)
+> 适用代码:HEAD = 当前 `main`(post **2026-05-18 八项 B200 关键修复 + 架构级 Fix H + 2026-05-19 FlashVSR 输入契约修复 + DiffSynth patchify 合约适配 + 16 样本 dry-run**)
 > 设计依据:`task_b1.md`(决策表见 §0)
 > 上游对齐:FlashVSR official (`OpenImagingLab/FlashVSR`) + vendored `wan_video_dit.py`
 > 实施计划:`docs/superpowers/plans/2026-05-16-vsr-b1-sparse-onestep.md`
-> 测试状态:**91 passed / 3 skipped / 0 failed**(macOS CPU 端,**全绿**)。B200 期望:**94 passed / 0 skipped / 0 failed**(2 个 CUDA BSA + 1 个 LPIPS gated 测试在 B200 跑起来全部 PASS)。
+> 测试状态:**96 passed / 3 skipped / 0 failed**(macOS CPU 端,**全绿**)。B200 期望:**99 passed / 0 skipped / 0 failed**(CUDA BSA + LPIPS gated 测试在 B200 跑起来全部 PASS)。
 
-> **关键变化(2026-05-18/19 批次)**: 8 项 critical + safety 修复 + 1 项架构级 Fix H 已全部 merge(commit `7433f31` → `b70c9e6`),并补齐 2026-05-19 FlashVSR 输入契约修复。详见 §0.1/§0.2。Fix H 把 LR 条件注入路径改成与 FlashVSR 上游一致的 **per-block additive residual at DiT inner dim 1536**,不再走 `z_t + LR_latent`;Fix K 把真实数据集输出对齐为 OpenImagingLab/FlashVSR 的 **`[B,3,F,H,W]` + `[-1,1]`** 输入契约。
+> **关键变化(2026-05-18/19 批次)**: 8 项 critical + safety 修复 + 1 项架构级 Fix H 已全部 merge(commit `7433f31` → `b70c9e6`),并补齐 2026-05-19 FlashVSR 输入契约修复、DiffSynth `patchify()` 返回值合约适配和快速 dry-run 入口。详见 §0.1/§0.2/§0.3。Fix H 把 LR 条件注入路径改成与 FlashVSR 上游一致的 **per-block additive residual at DiT inner dim 1536**,不再走 `z_t + LR_latent`;Fix K 把真实数据集输出对齐为 OpenImagingLab/FlashVSR 的 **`[B,3,F,H,W]` + `[-1,1]`** 输入契约;Fix L 兼容 vendored DiffSynth `WanModel.patchify()` 只返回 5D tensor 的实现。
 
 ---
 
@@ -36,8 +36,10 @@
 | **真 TCDecoder ckpt** | ⚠️ 操作员补 | 不传 `tc_decoder_ckpt` 时 `build_tc_decoder` 返回 identity stub |
 | ~~Issue H: `lq_proj` 1536 ch vs Wan in_dim 16 不匹配~~ | ✅ **fix-2026-05-18-H** (commit `b70c9e6`) | 已修复: per-block additive residual at 1536-dim inside block loop,与 FlashVSR 上游一致 |
 | ~~Issue K: B200 smoke 中 `Conv3d expected 768 channels, got 21760`~~ | ✅ **fix-2026-05-19-K** | 已修复: `DatasetB1` 将父数据集 `TCHW/[0,1]` 归一化为 `CTHW/[-1,1]`;`B1Pipeline.prepare_batch` 严格要求 `BCTHW` 后再调用 `Causal_LQ4x_Proj` |
+| ~~Issue L: `ValueError: not enough values to unpack (expected 2, got 1)`~~ | ✅ **fix-2026-05-19-L** | 已修复: `B1WanModel.forward` 同时支持根 `wan_video_dit.py` 的 `(tokens, grid)` 合约和 vendored DiffSynth 的 5D tensor 合约 |
+| 16 样本快速 dry-run | ✅ | 新增 `scripts/11_dry_run_16.sh`;支持 `data.max_samples=16`,关闭周期 ckpt/final ckpt/eval,用于快速验证真实数据 + checkpoint 加载 + forward/backward |
 
-**结论:核心训练链路完全打通,8 项 fix + 架构级 Fix H + FlashVSR 输入契约 Fix K 已全部完成。pytest 全绿(macOS 91/3/0,B200 预期 94/0/0)。B200 启动前仅需完成 §6 的验证 + §7 的 4 项操作员实现(O5 已随 Fix H 完成)即可跑完整 20k step。**
+**结论:核心训练链路完全打通,8 项 fix + 架构级 Fix H + FlashVSR 输入契约 Fix K + DiffSynth patchify Fix L + dry-run 入口已全部完成。pytest 全绿(macOS 96/3/0,B200 预期 99/0/0)。B200 启动前先跑 §4.5 dry-run,再跑 §6 的验证 + §7 的 4 项操作员实现(O5 已随 Fix H 完成),即可进入完整 20k step。**
 
 ---
 
@@ -96,11 +98,38 @@ expected input[1, 21760, 6, 66, 122] to have 768 channels, but got 21760 channel
 
 ```text
 python -m pytest tests/ -v
-91 passed, 3 skipped in 6.41s
+96 passed, 3 skipped
 
 git diff --check
 exit 0
 ```
+
+---
+
+## 0.3 2026-05-19 DiffSynth patchify 合约 + dry-run 修复
+
+B200 单卡 smoke 日志里出现:
+
+```text
+ValueError: not enough values to unpack (expected 2, got 1)
+  File "flashvsr_b1/models/wan_dit_b1.py", line 362, in forward
+    x, (f, h, w) = self.patchify(x)
+```
+
+根因是本仓库有两套 Wan DiT 合约:
+
+- 根目录 `wan_video_dit.py::WanModel.patchify` 返回 `(tokens, grid_size)`。
+- 实际训练运行时 `flashvsr_b1/models/wan_dit_b1.py` 优先加载 `DiffSynth-Studio/diffsynth/models/wan_video_dit.py`;该版本 `patchify()` 只做 `Conv3d` 并返回 5D tensor,DiffSynth pipeline 在外层再 `f,h,w = x.shape[2:]` 和 `rearrange`。
+
+修复策略:
+
+| 位置 | 修复 | 回归测试 |
+| --- | --- | --- |
+| `flashvsr_b1/models/wan_dit_b1.py` | `B1WanModel.forward` 兼容两种 `patchify` 返回值。tuple 路径保持原逻辑;5D tensor 路径从 `x.shape[2:]` 取 `(f,h,w)`,再 `flatten(2).transpose(1,2)` 成 `(B,N,dim)` | `tests/test_wan_dit_b1.py::test_b1_forward_handles_diffsynth_patchify_tensor_contract` |
+| `flashvsr_b1/train/trainer_b1.py` | `build_dataloader` 将训练 config 的 `data.*` runtime override 合并进外部 `data_b1.yaml`,使 `data.max_samples=16` 真正传到 `DatasetB1` | `tests/test_trainer_b1.py::test_build_dataloader_threads_runtime_data_overrides` |
+| `flashvsr_b1/train/trainer_b1.py` | `logging.ckpt_every_steps=0` 跳过周期 ckpt;`logging.save_final=false` 跳过最终 ckpt,避免 dry-run 等待大文件写盘 | `tests/test_trainer_b1.py::test_train_main_can_skip_checkpoints_for_dry_run` |
+| `scripts/10_smoke_one_step.sh` | 修正 OmegaConf override 写法: `train.total_steps=20`,不再使用 argparse 不接受的 `--train.total_steps=20` | `tests/test_scripts.py::test_smoke_script_uses_omegaconf_dotlist_overrides` |
+| `scripts/11_dry_run_16.sh` | 新增 16 样本快速入口,默认 2 step、0 worker、无 ckpt、无 eval | `tests/test_scripts.py::test_dry_run_16_script_disables_expensive_outputs` |
 
 ---
 
@@ -203,6 +232,7 @@ exit 0
 | 脚本 | 用途 |
 | --- | --- |
 | `10_smoke_one_step.sh` | 单卡 smoke,跑 20 step,产物完整性检查 |
+| `11_dry_run_16.sh` | 16 样本快速 dry-run,默认 2 step、无 ckpt、无 eval |
 | `20a_train_b1_bsa90.sh` | 8 卡 torchrun 启动 BSA-90 |
 | `20b_train_b1_lswa.sh` | 8 卡 torchrun 启动 LSWA |
 | `20c_train_b1_bsa95.sh` | 8 卡 torchrun 启动 BSA-95 |
@@ -219,14 +249,15 @@ exit 0
 | `test_dataset_b1.py` | aspect bucket / latent_shape / 父字段保留 + 父数据集 `TCHW/[0,1]` → FlashVSR `CTHW/[-1,1]` 契约 |
 | `test_bucket_sampler.py` | 每 batch 同向 + 桶轮换比例 + drop_last + DDP 不重 |
 | `test_flashvsr_components.py` | Tiny config / LQ_proj 输出维度 / TCDecoder 构造 |
-| `test_wan_dit_b1.py` | SelfAttentionB1 属性 + LSWA forward + aux 返回 + distill_layers 默认 |
+| `test_wan_dit_b1.py` | SelfAttentionB1 属性 + LSWA forward + aux 返回 + distill_layers 默认 + DiffSynth patchify 5D tensor 合约 |
 | `test_losses.py` | 4 个 loss 数值 + grad 流(LPIPS 测试需要 lpips 库) |
 | `test_metrics_logger.py` | log.txt / jsonl / csv 字段完整 + 吞吐量计算 + plot 不爆 |
 | `test_b1_pipeline.py` | 模块替换 + block_size 断言 + distill_layers 默认 |
 | `test_lambda_schedule.py` | warmup/main/refine 边界 + sparsity_at 端点 |
 | `test_ckpt_io.py` | save/load roundtrip + latest 软链接 |
-| `test_trainer_b1.py` | compute_loss assembly + LSWA 跳过 L_block + set_current_sparsity 调用条件 |
+| `test_trainer_b1.py` | compute_loss assembly + LSWA 跳过 L_block + set_current_sparsity 调用条件 + data runtime override + dry-run ckpt skip |
 | `test_eval_sr.py` | evaluate_checkpoint 字段聚合(stub) |
+| `test_scripts.py` | smoke/dry-run shell override 与禁用昂贵输出的静态契约 |
 | **`review_logic/test_review_real_logic.py`** | **非 mock 真集成测试**:b1_forward 端到端 + teacher/student 分离 + 因果 + λ 调度等 |
 | **`review_logic/test_b1_contract_gaps.py`** | B200 回流 contract gap 测试。当前覆盖 aux shape / BSA grid / LR conditioning / DDP bucket / FlashVSR `BCTHW` 输入契约,全部 PASS |
 
@@ -419,7 +450,30 @@ python -m eval.plot_training_metrics log/<刚才的目录>
 ls log/<目录>/loss_throughput.png
 ```
 
-### 4.5 三路串行 8 卡训练(每路约 2-3 天)
+### 4.5 快速 dry-run(16 样本 / 默认 2 step)
+
+用于内网 B200 上快速验证真实数据读取、ckpt 加载、teacher/student forward、loss/backward 和 optimizer step。该入口故意关闭 ckpt/eval,避免每次 debug 都等待大文件写盘。
+
+```bash
+bash scripts/11_dry_run_16.sh flashvsr_b1/configs/b1_bsa90.yaml
+```
+
+可用环境变量:
+
+```bash
+MAX_SAMPLES=16 TOTAL_STEPS=2 NUM_WORKERS=0 \
+bash scripts/11_dry_run_16.sh flashvsr_b1/configs/b1_bsa90.yaml
+```
+
+可在命令尾部继续追加 OmegaConf dotlist override:
+
+```bash
+bash scripts/11_dry_run_16.sh flashvsr_b1/configs/b1_bsa90.yaml data.max_retry=1
+```
+
+注意:`data.max_samples=16` 是在读取已有 `sample_json_path` 后裁剪样本。首次重建 sample index 仍会扫 metadata/video;内网 debug 建议保持 `rebuild_sample_json=false`,提前准备好 `train_samples.json`。
+
+### 4.6 三路串行 8 卡训练(每路约 2-3 天)
 
 ```bash
 # 顺序:90 → LSWA → 95
@@ -496,6 +550,8 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 | V7 | 真 ckpt 加载 + 一次完整 forward | 同 V6 smoke,观察第一行 step 是否 < 30s(冷启动后) | 不 crash,teacher + student state_dict 加载完整。**Fix H 已解锁,可执行** |
 | V8 | **新**: LR 残差注入路径回归 | `python -m pytest tests/test_wan_dit_b1.py::test_b1_forward_threads_LQ_latents_to_block_loop tests/test_wan_dit_b1.py::test_b1_forward_rejects_tensor_LR_latents -v` | 2 PASS。确认 LR 走 list-form LQ_latents 而非 `z_t + LR`,防 Fix H 回退 |
 | V9 | **新**: FlashVSR 输入契约回归 | `python -m pytest tests/test_dataset_b1.py::test_real_parent_tchw_zero_one_video_is_normalized_to_flashvsr_contract tests/review_logic/test_b1_contract_gaps.py::test_prepare_batch_passes_bcthw_rgb_to_lq_proj tests/review_logic/test_b1_contract_gaps.py::test_prepare_batch_rejects_btchw_before_conv3d_channel_error -v` | 3 PASS。确认父数据集 `TCHW/[0,1]` → `CTHW/[-1,1]`,`prepare_batch` 只允许 `BCTHW` 进入 `Causal_LQ4x_Proj` |
+| V10 | **新**: DiffSynth patchify 合约回归 | `python -m pytest tests/test_wan_dit_b1.py::test_b1_forward_handles_diffsynth_patchify_tensor_contract -v` | PASS。确认 vendored DiffSynth `patchify()` 只返回 5D tensor 时,B1 forward 能取 grid 并 flatten |
+| V11 | **新**: 16 样本 dry-run | `bash scripts/11_dry_run_16.sh flashvsr_b1/configs/b1_bsa90.yaml` | 预期 2 step 完成;不写 ckpt;不触发 eval;若首次重建 sample index,先准备 `train_samples.json` 后再重跑 |
 
 ---
 
@@ -524,6 +580,7 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 9. ~~**【2026-05-18】Issue H — lq_proj 1536 通道 vs Wan DiT in_dim 16 通道不匹配**~~ — **已修复 commit `b70c9e6`(详见 §0.1 第 8 行)**: 上游 FlashVSR 在 DiT block loop 内做 per-block additive residual at 1536-dim,而非 patch_embed 之前 `+`。`prepare_batch` 现在产 16-ch z_t + list-form LR_latents,`b1_forward` 直接 forward(z_t, LQ_latents=...)。V6/V7 已解锁。
 10. **新增子风险(2026-05-18)** — **lq_proj 与 z_t token count 必须严格匹配**:`Causal_LQ4x_Proj` PixelShuffle3d 是 `(1, 16, 16)`,要求 LR 输入处于 HR 分辨率(1024×1920 而非 256×480)才能产 `64×120` 空间 token 数匹配 patchify(z_t) 的 `64×120`。若 dataset 给的是真 LR 分辨率,需要在 prepare_batch 加 `F.interpolate` 上采样到 HR 网格,或确认 LSWA dataset 已经在内部做了 bicubic 上采样。**B200 smoke 跑起来 V6 时如果 LR_latents[0].shape[1] != z_t patchify N,会直接 shape mismatch**。
 11. ~~**【2026-05-19】Issue K — B200 smoke `Conv3d expected 768 channels, got 21760`**~~ — **已修复(详见 §0.2)**:`21760 = 85*16*16`,说明 `BTCHW` 的 85 帧被误当 channel。标准数据路径现在已经转成 FlashVSR official `BCTHW`。若仍复现,优先检查是否使用了自定义 dataset 或旧代码。
+12. ~~**【2026-05-19】Issue L — DiffSynth patchify 返回值不匹配**~~ — **已修复(详见 §0.3)**:B1 forward 现在兼容 `(tokens, grid)` 与 5D tensor 两种合约。若仍复现 `expected 2, got 1`,优先确认 `flashvsr_b1/models/wan_dit_b1.py` 是否包含 §0.3 的适配逻辑。
 
 ---
 
@@ -544,6 +601,8 @@ df.plot(x="step", y=["L_total", "L_out", "L_lpips", "L_block", "L_attn_out"], lo
 | 第一次 forward 极慢(> 5 min) | DiffSynth 重新下载 common files | 设 `cfg.redirect_common_files: False` + 检查内网 cache 路径 |
 | `RuntimeError: Given groups=1 ... expected ... 768 channels, but got 21760` | 跑的是 pre-fix-K 代码,或自定义 dataset 仍输出 `BTCHW` | `git pull` 到含 §0.2 的版本;跑 V9;确认 `DatasetB1` 输出 `CTHW/[-1,1]`,DataLoader 后为 `BCTHW` |
 | `ValueError: batch['lr'] must be BCTHW RGB video` | `prepare_batch` 边界拦截了错误布局 | 检查 dataset 是否绕过 `DatasetB1`;不要在 `lq_proj` 前传 `B,T,3,H,W` |
+| `ValueError: not enough values to unpack (expected 2, got 1)` at `self.patchify(x)` | 跑的是 pre-fix-L 代码;B1 forward 按根 `wan_video_dit.py` 的 `(tokens, grid)` 合约解包,但运行时加载的是 DiffSynth 5D tensor 合约 | `git pull` 到含 §0.3 的版本;跑 V10 |
+| dry-run 仍然很慢 | `sample_json_path` 不存在或 `rebuild_sample_json=true`,正在重建 sample index;或 `NUM_WORKERS` 太高导致 worker 冷启动/预取 | 先生成/复用 `train_samples.json`,保持 `rebuild_sample_json=false`;用 `NUM_WORKERS=0 MAX_SAMPLES=16 TOTAL_STEPS=2 bash scripts/11_dry_run_16.sh ...` |
 | `RuntimeError: ... patch_embed ...` 或 LR token count mismatch | `lq_proj` token 数与 z_t patchify token 数不一致 | 检查 LR 是否在 HR 分辨率(1024×1920 或 1920×1024)且 `latent_shape` 为 `(22,64,120)` / `(22,120,64)` |
 | `KeyError: 'h_out'` 在 trainer.compute_loss | 跑的是 pre-fix-A 的代码 | `git pull` 到 ≥ `2ca6194`;模型 forward 现在用 `setdefault(key, {})[layer_idx] = value` 聚合 |
 | NCCL `AllReduce` shape mismatch / hang 在第一个 step | bucket sampler 跨 rank 不同步 | `git pull` 到 ≥ `65b5c62` 包含 fix-D 的 super-chunk 实现 |

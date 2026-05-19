@@ -1,3 +1,5 @@
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -178,3 +180,102 @@ def test_compute_loss_set_current_sparsity_called_for_bsa_only():
         )
         trainer_lswa.compute_loss({}, step=0)
         assert mock_set.call_count == 0
+
+
+def test_build_dataloader_threads_runtime_data_overrides(tmp_path, monkeypatch):
+    from flashvsr_b1.train import trainer_b1
+
+    data_cfg_path = tmp_path / "data.yaml"
+    data_cfg_path.write_text(
+        "\n".join(
+            [
+                "metadata_json_path: /dataset/scenes.json",
+                "sample_json_path: /dataset/train_samples.json",
+                "max_samples: 0",
+                "shuffle_samples: true",
+            ]
+        )
+    )
+    captured = {}
+
+    class FakeDataset(torch.utils.data.Dataset):
+        def __init__(self, opt):
+            captured["opt"] = dict(opt)
+            self.bucket_index = ["landscape", "landscape", "portrait", "portrait"]
+
+        def __len__(self):
+            return len(self.bucket_index)
+
+        def __getitem__(self, index):
+            return index
+
+    fake_dataset_module = types.ModuleType("flashvsr_b1.data.dataset_b1")
+    fake_dataset_module.DatasetB1 = FakeDataset
+    monkeypatch.setitem(sys.modules, "flashvsr_b1.data.dataset_b1", fake_dataset_module)
+
+    cfg = SimpleNamespace(
+        data=SimpleNamespace(
+            cfg=str(data_cfg_path),
+            max_samples=16,
+            shuffle_samples=False,
+            num_workers=0,
+        ),
+        train=SimpleNamespace(per_rank_batch=1, seed=123),
+    )
+
+    trainer_b1.build_dataloader(cfg)
+
+    assert captured["opt"]["max_samples"] == 16
+    assert captured["opt"]["shuffle_samples"] is False
+
+
+def test_train_main_can_skip_checkpoints_for_dry_run(tmp_path, monkeypatch):
+    from flashvsr_b1.train import trainer_b1
+
+    config_path = tmp_path / "dry_run.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "train:",
+                "  total_steps: 1",
+                "  seed: 123",
+                "logging:",
+                "  ckpt_every_steps: 0",
+                "  save_final: false",
+                "eval:",
+                "  every_steps: 0",
+                "data:",
+                "  cfg: unused.yaml",
+            ]
+        )
+    )
+    captured = {"steps": [], "save_steps": [], "closed": False}
+
+    class FakeMetrics:
+        def close(self):
+            captured["closed"] = True
+
+    class FakeTrainer:
+        def __init__(self, cfg, config_path):
+            self.student = torch.nn.Linear(1, 1)
+            self.metrics = FakeMetrics()
+
+        def training_step(self, batch, step):
+            captured["steps"].append(step)
+
+        def save_checkpoint(self, step):
+            captured["save_steps"].append(step)
+
+    monkeypatch.setattr(trainer_b1, "B1Trainer", FakeTrainer)
+    monkeypatch.setattr(
+        trainer_b1,
+        "build_optimizer_and_scheduler",
+        lambda model, cfg: (object(), None),
+    )
+    monkeypatch.setattr(trainer_b1, "build_dataloader", lambda cfg: [{"batch": 0}])
+
+    trainer_b1.train_main(str(config_path))
+
+    assert captured["steps"] == [0]
+    assert captured["save_steps"] == []
+    assert captured["closed"] is True
