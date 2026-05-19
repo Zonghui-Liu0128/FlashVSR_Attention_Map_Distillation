@@ -77,6 +77,14 @@ class _UnavailableAdapter(nn.Module):
 wan_video_dit = _load_wan_video_dit()
 
 
+def _module_device_dtype(module: nn.Module) -> tuple[torch.device | None, torch.dtype | None]:
+    for tensor in module.parameters(recurse=True):
+        return tensor.device, tensor.dtype
+    for tensor in module.buffers(recurse=True):
+        return tensor.device, tensor.dtype if tensor.is_floating_point() else None
+    return None, None
+
+
 class SelfAttentionB1(nn.Module):
     def __init__(
         self,
@@ -295,6 +303,9 @@ class B1WanModel(wan_video_dit.WanModel):
                 window_size=window_size,
                 distill_export=layer_idx in self.distill_layers,
             )
+            old_device, old_dtype = _module_device_dtype(old_attn)
+            if old_device is not None:
+                new_attn.to(device=old_device, dtype=old_dtype)
             new_attn.attn_mode = attn_mode
             new_attn.copy_from_wan_self_attention(old_attn)
             block.self_attn = new_attn

@@ -1,5 +1,6 @@
 import torch
-from flashvsr_b1.models.wan_dit_b1 import SelfAttentionB1, B1WanModel
+import torch.nn as nn
+from flashvsr_b1.models.wan_dit_b1 import SelfAttentionB1, B1WanModel, wan_video_dit
 
 def test_self_attention_default_attrs():
     sa = SelfAttentionB1(dim=1536, num_heads=12)
@@ -31,6 +32,44 @@ def test_b1_wan_model_distill_layers_default():
     m = B1WanModel.__new__(B1WanModel)
     m._init_distill_layers_for_test()
     assert m.distill_layers == {4, 9, 14, 19, 24, 29}
+
+
+class _SourceSelfAttention(nn.Module):
+    def __init__(self, dim=8, num_heads=2):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.q = nn.Linear(dim, dim)
+        self.k = nn.Linear(dim, dim)
+        self.v = nn.Linear(dim, dim)
+        self.o = nn.Linear(dim, dim)
+        self.norm_q = wan_video_dit.RMSNorm(dim)
+        self.norm_k = wan_video_dit.RMSNorm(dim)
+
+
+class _SourceBlock(nn.Module):
+    def __init__(self, dim=8, num_heads=2):
+        super().__init__()
+        self.self_attn = _SourceSelfAttention(dim=dim, num_heads=num_heads)
+
+
+class _SourceWan(nn.Module):
+    def __init__(self, dim=8, num_heads=2):
+        super().__init__()
+        self.blocks = nn.ModuleList([_SourceBlock(dim=dim, num_heads=num_heads)])
+
+
+def test_from_wan_model_preserves_replaced_attention_dtype_and_device():
+    source = _SourceWan().to(dtype=torch.bfloat16)
+    if torch.cuda.is_available():
+        source = source.to("cuda")
+
+    source_param = next(source.blocks[0].self_attn.parameters())
+    model = B1WanModel.from_wan_model(source, distill_layers=[])
+    replaced_param = next(model.blocks[0].self_attn.parameters())
+
+    assert replaced_param.dtype == source_param.dtype
+    assert replaced_param.device == source_param.device
 
 
 def test_b1_forward_threads_LQ_latents_to_block_loop():
