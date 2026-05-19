@@ -1,29 +1,24 @@
-运行bash scripts/10_smoke_one_step.sh flashvsr_b1/configs/b1_bsa90.yaml有报错：
-...
-运行数据相关测试：
-(flashvsr_b200) p_kepom@sh-qingpu-a04-25-01:/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation$ bash test_data.sh 
-2934 {'sample_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c_s000_c0008_p000', 'video_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'path': '/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'fps': 29.97, 'total_frames': 331, 'height': 2160, 'width': 3840, 'scene_id': 0, 'scene_start': 0, 'scene_end': 331, 'scene_frames': 331, 'clip_id': 8, 'clip_start': 290, 'clip_end': 331, 'frame_num': 41, 'crop_x': 1440, 'crop_y': 824, 'crop_width': 960, 'crop_height': 512, 'crop_policy': 'sliding:center', 'crop_id': 0}
-2935 {'sample_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c_s000_c0008_p001', 'video_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'path': '/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'fps': 29.97, 'total_frames': 331, 'height': 2160, 'width': 3840, 'scene_id': 0, 'scene_start': 0, 'scene_end': 331, 'scene_frames': 331, 'clip_id': 8, 'clip_start': 290, 'clip_end': 331, 'frame_num': 41, 'crop_x': 0, 'crop_y': 0, 'crop_width': 960, 'crop_height': 512, 'crop_policy': 'sliding', 'crop_id': 1}
-2936 {'sample_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c_s000_c0008_p002', 'video_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'path': '/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'fps': 29.97, 'total_frames': 331, 'height': 2160, 'width': 3840, 'scene_id': 0, 'scene_start': 0, 'scene_end': 331, 'scene_frames': 331, 'clip_id': 8, 'clip_start': 290, 'clip_end': 331, 'frame_num': 41, 'crop_x': 720, 'crop_y': 0, 'crop_width': 960, 'crop_height': 512, 'crop_policy': 'sliding', 'crop_id': 2}
-2937 {'sample_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c_s000_c0008_p003', 'video_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'path': '/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'fps': 29.97, 'total_frames': 331, 'height': 2160, 'width': 3840, 'scene_id': 0, 'scene_start': 0, 'scene_end': 331, 'scene_frames': 331, 'clip_id': 8, 'clip_start': 290, 'clip_end': 331, 'frame_num': 41, 'crop_x': 1440, 'crop_y': 0, 'crop_width': 960, 'crop_height': 512, 'crop_policy': 'sliding', 'crop_id': 3}
-2938 {'sample_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c_s000_c0008_p004', 'video_id': '86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'path': '/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4', 'fps': 29.97, 'total_frames': 331, 'height': 2160, 'width': 3840, 'scene_id': 0, 'scene_start': 0, 'scene_end': 331, 'scene_frames': 331, 'clip_id': 8, 'clip_start': 290, 'clip_end': 331, 'frame_num': 41, 'crop_x': 2160, 'crop_y': 0, 'crop_width': 960, 'crop_height': 512, 'crop_policy': 'sliding', 'crop_id': 4}
-(flashvsr_b200) p_kepom@sh-qingpu-a04-25-01:/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation$ python - <<'PY'
-import cv2
-path = "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/datasets_vsr/aigcvsr_dataset/8w_video/EDD-Video_V1130_purchase_v1/part-0097/86b29fe0-1517-4f9a-a882-2362f0caa59c.mp4"
-cap = cv2.VideoCapture(path)
-print("opened", cap.isOpened())
-print("frame_count", cap.get(cv2.CAP_PROP_FRAME_COUNT), "fps", cap.get(cv2.CAP_PROP_FPS))
-for frame_id in [327, 328, 329, 330, 331, 332]:
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
-    ret, frame = cap.read()
-    print(frame_id, ret, None if frame is None else frame.shape, "pos_after", cap.get(cv2.CAP_PROP_POS_FRAMES))
-cap.release()
-PY
-opened True
-frame_count 379.0 fps 29.96995097263957
-327 True (2160, 3840, 3) pos_after 328.0
-328 True (2160, 3840, 3) pos_after 329.0
-329 True (2160, 3840, 3) pos_after 330.0
-330 False None pos_after 330.0
-331 False None pos_after 330.0
-332 False None pos_after 330.0
+运行bash scripts/11_dry_run_16.sh flashvsr_b1/configs/b1_bsa90.yaml有报错：
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 442, in <module>
+    train_main(args.config, args.overrides)
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 419, in train_main
+    trainer.training_step(batch, step)
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 219, in training_step
+    loss, loss_dict = self.compute_loss(batch, step)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 184, in compute_loss
+    x_t, aux_t = self._forward_model(self.teacher, LR_latent, z_t, t_star)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/train/trainer_b1.py", line 166, in _forward_model
+    return model.b1_forward(LR_latent, z_t, t_star, return_aux=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 274, in b1_forward
+    return self.forward(
+           ^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 384, in forward
+    x = x + LQ_latents[layer_idx]
+        ~~^~~~~~~~~~~~~~~~~~~~~~~
+RuntimeError: The size of tensor a (168960) must match the size of tensor b (161280) at non-singleton dimension 1
