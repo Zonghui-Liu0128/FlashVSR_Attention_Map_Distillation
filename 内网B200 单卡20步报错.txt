@@ -18,7 +18,31 @@ Traceback (most recent call last):
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 274, in b1_forward
     return self.forward(
            ^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 384, in forward
-    x = x + LQ_latents[layer_idx]
-        ~~^~~~~~~~~~~~~~~~~~~~~~~
-RuntimeError: The size of tensor a (168960) must match the size of tensor b (161280) at non-singleton dimension 1
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 386, in forward
+    x, aux = self._forward_block_b1(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 319, in _forward_block_b1
+    attn_result = block.self_attn(
+                  ^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 168, in forward
+    q, k, v = self._project_qkv(x)
+              ^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 160, in _project_qkv
+    q, k, v = self.qkv_proj(x).chunk(3, dim=-1)
+              ^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
