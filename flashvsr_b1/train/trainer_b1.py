@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from flashvsr_b1.losses.output_loss import L_output
 from flashvsr_b1.train.ckpt_io import save_checkpoint as save_checkpoint_file
 from flashvsr_b1.train.ckpt_io import update_latest_symlink
 from flashvsr_b1.train.lambda_schedule import lambda_at, sparsity_at
+from flashvsr_b1.train.memory_trace import MemoryTrace, get_memory_trace, set_memory_trace
 from flashvsr_b1.train.metrics_logger import MetricsLogger, make_run_dir
 
 
@@ -99,6 +101,20 @@ def current_sparsity_of(model: torch.nn.Module) -> float:
     return float(getattr(model, "current_sparsity", 0.0))
 
 
+def _trace_range(trace, name: str, **kwargs):
+    return trace.range(name, **kwargs) if trace is not None else nullcontext()
+
+
+def _set_trace_label(model: torch.nn.Module | None, label: str) -> None:
+    if model is None:
+        return
+    target = getattr(model, "module", model)
+    try:
+        setattr(target, "_memory_trace_label", label)
+    except Exception:
+        pass
+
+
 class B1Trainer(DiffusionTrainingModule):
     def __init__(self, cfg, config_path: str):
         super().__init__()
@@ -111,6 +127,10 @@ class B1Trainer(DiffusionTrainingModule):
         if _is_rank0() and os.path.exists(config_path):
             os.makedirs(self.run_dir, exist_ok=True)
             shutil.copy(config_path, os.path.join(self.run_dir, "config_snapshot.yaml"))
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+        self.mem_trace = MemoryTrace.from_env(self.run_dir, rank=rank)
+        set_memory_trace(self.mem_trace)
+        self.mem_trace.record("trainer.init", config_path=config_path)
 
         self._build_components()
         self._assert_block_size_match()
@@ -137,6 +157,8 @@ class B1Trainer(DiffusionTrainingModule):
         self.pipeline = pipe
         self.teacher = getattr(pipe, "teacher", None) or getattr(pipe, "teacher_dit", None)
         self.student = getattr(pipe, "student", None) or getattr(pipe, "dit", None)
+        _set_trace_label(self.teacher, "teacher")
+        _set_trace_label(self.student, "student")
         self.vae_decoder = getattr(pipe, "vae_decoder", None) or getattr(pipe, "tc_decoder", None)
         self.lpips_net = getattr(pipe, "lpips_net", None)
         if self.teacher is None:
@@ -169,7 +191,20 @@ class B1Trainer(DiffusionTrainingModule):
         raise RuntimeError(f"Model has no b1_forward: {type(model)}")
 
     def compute_loss(self, batch, step: int) -> tuple[torch.Tensor, dict]:
-        LR_latent, z_t, t_star, gt_hr = self.prepare_batch(batch)
+        trace = get_memory_trace()
+        with _trace_range(trace, "trainer.prepare_batch", tensors=batch, step=step):
+            LR_latent, z_t, t_star, gt_hr = self.prepare_batch(batch)
+        if trace is not None:
+            trace.record(
+                "trainer.prepare_batch.output",
+                step=step,
+                tensors={
+                    "LR_latent": LR_latent,
+                    "z_t": z_t,
+                    "t_star": t_star,
+                    "gt_hr": gt_hr,
+                },
+            )
         attn_mode = getattr(self.student, "attn_mode", _cfg_get(self.cfg, "attn_mode", "BSA"))
 
         if attn_mode == "BSA":
@@ -181,29 +216,47 @@ class B1Trainer(DiffusionTrainingModule):
             )
 
         with torch.no_grad():
-            x_t, aux_t = self._forward_model(self.teacher, LR_latent, z_t, t_star)
+            with _trace_range(
+                trace,
+                "trainer.teacher_forward",
+                step=step,
+                tensors={"LR_latent": LR_latent, "z_t": z_t},
+            ):
+                x_t, aux_t = self._forward_model(self.teacher, LR_latent, z_t, t_star)
         aux_t = _detach_aux(aux_t)
 
-        x_s, aux_s = self._forward_model(self.student, LR_latent, z_t, t_star)
+        with _trace_range(
+            trace,
+            "trainer.student_forward",
+            step=step,
+            tensors={"LR_latent": LR_latent, "z_t": z_t},
+        ):
+            x_s, aux_s = self._forward_model(self.student, LR_latent, z_t, t_star)
         layers = list(_cfg_get(self.cfg, "distill_layers", [4, 9, 14, 19, 24, 29]))
 
-        loss_dict = {
-            "out": L_output(x_s, x_t.detach()),
-            "lpips": L_lpips(x_s, gt_hr, self.vae_decoder, self.lpips_net),
-            "attn_out": _mean_layer_loss(
-                L_attn_out,
-                aux_s["h_out"],
-                aux_t["h_out"],
-                layers,
-            ),
-        }
-        if attn_mode == "BSA":
-            loss_dict["block"] = _mean_layer_loss(
-                L_block,
-                aux_t["A_blk"],
-                aux_s["A_blk"],
-                layers,
-            )
+        with _trace_range(
+            trace,
+            "trainer.loss_terms",
+            step=step,
+            tensors={"x_s": x_s, "x_t": x_t, "gt_hr": gt_hr},
+        ):
+            loss_dict = {
+                "out": L_output(x_s, x_t.detach()),
+                "lpips": L_lpips(x_s, gt_hr, self.vae_decoder, self.lpips_net),
+                "attn_out": _mean_layer_loss(
+                    L_attn_out,
+                    aux_s["h_out"],
+                    aux_t["h_out"],
+                    layers,
+                ),
+            }
+            if attn_mode == "BSA":
+                loss_dict["block"] = _mean_layer_loss(
+                    L_block,
+                    aux_t["A_blk"],
+                    aux_s["A_blk"],
+                    layers,
+                )
 
         lam = lambda_at(step)
         total = (
@@ -216,14 +269,18 @@ class B1Trainer(DiffusionTrainingModule):
         return total, loss_dict
 
     def training_step(self, batch, step: int) -> None:
-        loss, loss_dict = self.compute_loss(batch, step)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.student.parameters(),
-            float(_cfg_get(_cfg_get(self.cfg, "train", {}), "grad_clip", 1.0)),
-        )
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+        trace = get_memory_trace()
+        with _trace_range(trace, "trainer.compute_loss", step=step, tensors=batch):
+            loss, loss_dict = self.compute_loss(batch, step)
+        with _trace_range(trace, "trainer.backward", step=step, tensors={"loss": loss}):
+            loss.backward()
+        with _trace_range(trace, "trainer.optimizer_step", step=step):
+            torch.nn.utils.clip_grad_norm_(
+                self.student.parameters(),
+                float(_cfg_get(_cfg_get(self.cfg, "train", {}), "grad_clip", 1.0)),
+            )
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
         loss_dict["total"] = loss
         self.metrics.step(
@@ -415,8 +472,21 @@ def train_main(config_path: str, overrides: list[str] | None = None):
                     ctx = torch.cuda.amp.autocast(dtype=autocast_dtype)
                 else:
                     ctx = _NullCtx()
-                with ctx:
-                    trainer.training_step(batch, step)
+                try:
+                    with ctx:
+                        trainer.training_step(batch, step)
+                except RuntimeError as exc:
+                    if "out of memory" in str(exc).lower():
+                        trace = getattr(trainer, "mem_trace", None) or get_memory_trace()
+                        if trace is not None:
+                            trace.record(
+                                "trainer.oom",
+                                step=step,
+                                error=repr(exc),
+                                tensors=batch,
+                            )
+                            trace.dump_memory_summary(f"oom_step_{step}")
+                    raise
                 step += 1
                 if ckpt_every > 0 and step % ckpt_every == 0:
                     trainer.save_checkpoint(step)
@@ -427,7 +497,12 @@ def train_main(config_path: str, overrides: list[str] | None = None):
         if save_final:
             trainer.save_checkpoint(step)
     finally:
-        trainer.metrics.close()
+        if "trainer" in locals():
+            trainer.metrics.close()
+            trace = getattr(trainer, "mem_trace", None)
+            if trace is not None:
+                trace.close()
+        set_memory_trace(None)
         if dist.is_available() and dist.is_initialized():
             dist.destroy_process_group()
 

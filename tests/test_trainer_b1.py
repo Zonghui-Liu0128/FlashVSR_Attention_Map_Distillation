@@ -279,3 +279,55 @@ def test_train_main_can_skip_checkpoints_for_dry_run(tmp_path, monkeypatch):
     assert captured["steps"] == [0]
     assert captured["save_steps"] == []
     assert captured["closed"] is True
+
+
+def test_train_main_dumps_memory_summary_on_oom(tmp_path, monkeypatch):
+    from flashvsr_b1.train import trainer_b1
+    from flashvsr_b1.train.memory_trace import MemoryTrace
+
+    config_path = tmp_path / "dry_run.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "train:",
+                "  total_steps: 1",
+                "  seed: 123",
+                "logging:",
+                "  ckpt_every_steps: 0",
+                "  save_final: false",
+                "eval:",
+                "  every_steps: 0",
+                "data:",
+                "  cfg: unused.yaml",
+            ]
+        )
+    )
+    run_dir = tmp_path / "run"
+    captured = {"metrics_closed": False}
+
+    class FakeMetrics:
+        def close(self):
+            captured["metrics_closed"] = True
+
+    class FakeTrainer:
+        def __init__(self, cfg, config_path):
+            self.student = torch.nn.Linear(1, 1)
+            self.metrics = FakeMetrics()
+            self.mem_trace = MemoryTrace(run_dir, enabled=True, nvtx=False, rank=0)
+
+        def training_step(self, batch, step):
+            raise RuntimeError("CUDA out of memory during test")
+
+    monkeypatch.setattr(trainer_b1, "B1Trainer", FakeTrainer)
+    monkeypatch.setattr(
+        trainer_b1,
+        "build_optimizer_and_scheduler",
+        lambda model, cfg: (object(), None),
+    )
+    monkeypatch.setattr(trainer_b1, "build_dataloader", lambda cfg: [{"batch": torch.zeros(1)}])
+
+    with pytest.raises(RuntimeError, match="out of memory"):
+        trainer_b1.train_main(str(config_path))
+
+    assert captured["metrics_closed"] is True
+    assert (run_dir / "memory_summary_oom_step_0_rank0.txt").exists()

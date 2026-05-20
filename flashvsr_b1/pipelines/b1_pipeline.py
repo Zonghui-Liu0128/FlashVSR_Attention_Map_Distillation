@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from flashvsr_b1.models.flashvsr_components import (
     load_flashvsr_tiny_checkpoint,
 )
 from flashvsr_b1.models.wan_dit_b1 import B1WanModel
+from flashvsr_b1.train.memory_trace import get_memory_trace
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +68,10 @@ def _module_device(model) -> torch.device:
     for p in _iter_parameters(model):
         return p.device
     return torch.device("cpu")
+
+
+def _trace_range(trace, name: str, **kwargs):
+    return trace.range(name, **kwargs) if trace is not None else nullcontext()
 
 
 def _require_bcthw_rgb(video: torch.Tensor, name: str) -> torch.Tensor:
@@ -225,6 +231,7 @@ class B1Pipeline(WanVideoPipeline):
             t_star (Tensor): single-step diffusion timestep scalar.
             hr_rgb (Tensor): ground-truth HR pixels for L_lpips.
         """
+        trace = get_memory_trace()
         device = self.dit_device()
         lr_rgb = _require_bcthw_rgb(batch["lr"].to(device), "batch['lr']")
         hr_rgb = _require_bcthw_rgb(batch["hr"].to(device), "batch['hr']")
@@ -251,7 +258,13 @@ class B1Pipeline(WanVideoPipeline):
             [lr_rgb, lr_rgb[:, :, -1:, :, :].repeat(1, 1, 4, 1, 1)],
             dim=2,
         ).contiguous()
-        lr_tokens = self.lq_proj(lr_rgb_for_lq_proj)
+        with _trace_range(
+            trace,
+            "pipeline.lq_proj",
+            tensors={"lr_rgb": lr_rgb, "lr_rgb_for_lq_proj": lr_rgb_for_lq_proj},
+            token_grid=token_grid,
+        ):
+            lr_tokens = self.lq_proj(lr_rgb_for_lq_proj)
         if lr_tokens.ndim == 3:
             # layer_num=1: (B, 1536, N) -> list[(B, N, 1536)]
             LR_latents = [lr_tokens.transpose(1, 2).contiguous()]
@@ -297,6 +310,18 @@ class B1Pipeline(WanVideoPipeline):
             device=device,
             dtype=dit_dtype,
         )
+        if trace is not None:
+            trace.record(
+                "pipeline.prepare_batch.output",
+                token_grid=token_grid,
+                pre_patch_latent_shape=pre_patch_latent_shape,
+                tensors={
+                    "lr_tokens": lr_tokens,
+                    "LR_latents": LR_latents,
+                    "z_t": z_t,
+                    "hr_rgb": hr_rgb,
+                },
+            )
 
         t_star = torch.tensor(self.cfg_single_step_t, device=device)
         return LR_latents, z_t, t_star, hr_rgb

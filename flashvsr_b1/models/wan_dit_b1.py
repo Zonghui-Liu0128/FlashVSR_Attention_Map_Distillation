@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import torch.nn as nn
 from flashvsr_b1.attn.bsa_kernel import bsa_forward
 from flashvsr_b1.attn.lswa import lswa_forward
 from flashvsr_b1.attn.shadow_block_pool_attn import shadow_block_pool_attn
+from flashvsr_b1.train.memory_trace import get_memory_trace
 
 
 _DEFAULT_DISTILL_LAYERS = {4, 9, 14, 19, 24, 29}
@@ -83,6 +85,10 @@ def _module_device_dtype(module: nn.Module) -> tuple[torch.device | None, torch.
     for tensor in module.buffers(recurse=True):
         return tensor.device, tensor.dtype if tensor.is_floating_point() else None
     return None, None
+
+
+def _trace_range(trace, name: str, **kwargs):
+    return trace.range(name, **kwargs) if trace is not None else nullcontext()
 
 
 class SelfAttentionB1(nn.Module):
@@ -310,7 +316,8 @@ class B1WanModel(wan_video_dit.WanModel):
             new_attn.copy_from_wan_self_attention(old_attn)
             block.self_attn = new_attn
 
-    def _forward_block_b1(self, block, x, context, t_mod, freqs, *, f, h, w, return_aux):
+    def _forward_block_b1(self, block, x, context, t_mod, freqs, *, f, h, w, return_aux, trace_name=None):
+        trace = get_memory_trace()
         has_seq = len(t_mod.shape) == 4
         chunk_dim = 2 if has_seq else 1
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
@@ -326,23 +333,27 @@ class B1WanModel(wan_video_dit.WanModel):
                 gate_mlp.squeeze(2),
             )
 
-        input_x = wan_video_dit.modulate(block.norm1(x), shift_msa, scale_msa)
-        attn_result = block.self_attn(
-            input_x,
-            freqs,
-            return_aux=return_aux,
-            f=f,
-            h=h,
-            w=w,
-        )
+        prefix = trace_name or "dit.block"
+        with _trace_range(trace, f"{prefix}.self_attn", tensors={"x": x}):
+            input_x = wan_video_dit.modulate(block.norm1(x), shift_msa, scale_msa)
+            attn_result = block.self_attn(
+                input_x,
+                freqs,
+                return_aux=return_aux,
+                f=f,
+                h=h,
+                w=w,
+            )
         if isinstance(attn_result, tuple):
             attn_out, aux = attn_result
         else:
             attn_out, aux = attn_result, None
-        x = block.gate(x, gate_msa, attn_out)
-        x = x + block.cross_attn(block.norm3(x), context)
-        input_x = wan_video_dit.modulate(block.norm2(x), shift_mlp, scale_mlp)
-        x = block.gate(x, gate_mlp, block.ffn(input_x))
+        with _trace_range(trace, f"{prefix}.cross_attn", tensors={"x": x, "attn_out": attn_out, "context": context}):
+            x = block.gate(x, gate_msa, attn_out)
+            x = x + block.cross_attn(block.norm3(x), context)
+        with _trace_range(trace, f"{prefix}.ffn", tensors={"x": x}):
+            input_x = wan_video_dit.modulate(block.norm2(x), shift_mlp, scale_mlp)
+            x = block.gate(x, gate_mlp, block.ffn(input_x))
         return x, aux
 
     def forward(
@@ -358,19 +369,23 @@ class B1WanModel(wan_video_dit.WanModel):
         return_aux: bool = False,
         **kwargs,
     ):
+        trace = get_memory_trace()
+        trace_label = str(getattr(self, "_memory_trace_label", "dit"))
         del use_gradient_checkpointing, use_gradient_checkpointing_offload, kwargs
-        t = self.time_embedding(
-            wan_video_dit.sinusoidal_embedding_1d(self.freq_dim, timestep).to(x.dtype)
-        )
-        t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
-        context = self.text_embedding(context)
+        with _trace_range(trace, f"{trace_label}.embeddings", tensors={"x": x, "timestep": timestep, "context": context}):
+            t = self.time_embedding(
+                wan_video_dit.sinusoidal_embedding_1d(self.freq_dim, timestep).to(x.dtype)
+            )
+            t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
+            context = self.text_embedding(context)
 
         if self.has_image_input:
             x = torch.cat([x, y], dim=1)
             clip_embedding = self.img_emb(clip_feature)
             context = torch.cat([clip_embedding, context], dim=1)
 
-        patchified = self.patchify(x)
+        with _trace_range(trace, f"{trace_label}.patchify", tensors={"x": x}):
+            patchified = self.patchify(x)
         if isinstance(patchified, tuple):
             x, grid_size = patchified
             f, h, w = tuple(int(v) for v in grid_size)
@@ -378,6 +393,8 @@ class B1WanModel(wan_video_dit.WanModel):
             x = patchified
             f, h, w = tuple(int(v) for v in x.shape[2:])
             x = x.flatten(2).transpose(1, 2).contiguous()
+        if trace is not None:
+            trace.record(f"{trace_label}.patchify.output", grid=(f, h, w), tensors={"x": x})
         freqs = torch.cat(
             [
                 self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
@@ -404,6 +421,7 @@ class B1WanModel(wan_video_dit.WanModel):
                 h=h,
                 w=w,
                 return_aux=return_aux,
+                trace_name=f"{trace_label}.block_{layer_idx:02d}",
             )
             if aux is None:
                 continue
@@ -412,8 +430,9 @@ class B1WanModel(wan_video_dit.WanModel):
             for key, value in aux.items():
                 layer_aux.setdefault(key, {})[layer_idx] = value
 
-        x = self.head(x, t)
-        x = self.unpatchify(x, (f, h, w))
+        with _trace_range(trace, f"{trace_label}.head_unpatchify", tensors={"x": x}):
+            x = self.head(x, t)
+            x = self.unpatchify(x, (f, h, w))
         if return_aux:
             return x, layer_aux
         return x
