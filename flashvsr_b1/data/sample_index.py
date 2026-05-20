@@ -77,6 +77,62 @@ def get_video_info_cv2(path: str) -> dict[str, Any]:
     }
 
 
+def is_clip_decodable_cv2(path: str, start_frame: int, frame_num: int) -> bool:
+    try:
+        import cv2
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Missing dependency `opencv-python-headless`; install it in the target env.") from exc
+
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        return False
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_frame))
+        for _ in range(int(frame_num)):
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                return False
+        return True
+    finally:
+        cap.release()
+
+
+def validate_sample_index_contract(
+    sample_index: dict[str, Any],
+    expected: dict[str, Any],
+    *,
+    sample_json_path: str | None = None,
+) -> None:
+    """Fail fast when an existing sample index was built for a different data contract."""
+    allow_frame_truncation = bool(expected.get("allow_frame_truncation", False))
+    expected_values = {
+        "frame_num": int(expected["frame_num"]),
+        "crop_width": int(expected["crop_width"]),
+        "crop_height": int(expected["crop_height"]),
+    }
+    samples = sample_index.get("samples", [])
+    for sample in samples:
+        mismatches = []
+        for key, expected_value in expected_values.items():
+            actual = _as_int(sample.get(key), None)
+            if (
+                key == "frame_num"
+                and allow_frame_truncation
+                and actual is not None
+                and actual >= expected_value
+            ):
+                continue
+            if actual != expected_value:
+                mismatches.append(f"{key}={actual} expected={expected_value}")
+        if mismatches:
+            sample_id = sample.get("sample_id", "<unknown>")
+            where = f" at {sample_json_path}" if sample_json_path else ""
+            raise RuntimeError(
+                f"stale sample index{where}: sample={sample_id} has "
+                f"{'; '.join(mismatches)}. Rebuild sample_json_path with the current data config."
+            )
+
+
 def plan_spatial_crops(
     *,
     width: int,
@@ -225,6 +281,7 @@ def build_sample_records_from_metadata(opt: dict[str, Any]) -> dict[str, Any]:
     min_source_height = _as_int(opt.get("min_source_height"), None)
     max_source_width = _as_int(opt.get("max_source_width"), None)
     max_source_height = _as_int(opt.get("max_source_height"), None)
+    validate_clip_decode = bool(opt.get("validate_clip_decode", False))
 
     with open(metadata_json_path, "r", encoding="utf-8") as f:
         metadata = json.load(f)
@@ -241,6 +298,7 @@ def build_sample_records_from_metadata(opt: dict[str, Any]) -> dict[str, Any]:
         "dropped_short_scene": 0,
         "dropped_small_resolution": 0,
         "dropped_resolution_filtered": 0,
+        "dropped_decode_failed": 0,
     }
     samples: list[dict[str, Any]] = []
 
@@ -332,10 +390,18 @@ def build_sample_records_from_metadata(opt: dict[str, Any]) -> dict[str, Any]:
                 include_tail_clip=include_tail_clip,
                 max_clips_per_scene=max_clips_per_scene,
             )
-            stats["scenes_used"] += 1
-            stats["clips_built"] += len(starts)
-            video_used = True
+            valid_starts: list[tuple[int, int]] = []
             for clip_id, clip_start in enumerate(starts):
+                if validate_clip_decode and not is_clip_decodable_cv2(path, clip_start, frame_num):
+                    stats["dropped_decode_failed"] += 1
+                    continue
+                valid_starts.append((clip_id, clip_start))
+            if not valid_starts:
+                continue
+            stats["scenes_used"] += 1
+            stats["clips_built"] += len(valid_starts)
+            video_used = True
+            for clip_id, clip_start in valid_starts:
                 for crop in crops:
                     sample_id = f"{Path(video_key).stem}_s{int(scene_id):03d}_c{clip_id:04d}_p{int(crop['crop_id']):03d}"
                     samples.append({
@@ -380,6 +446,7 @@ def build_sample_records_from_metadata(opt: dict[str, Any]) -> dict[str, Any]:
             "max_spatial_crops_per_clip": max_spatial_crops_per_clip,
             "strict_path_exists": strict_path_exists,
             "read_resolution_with_cv2": read_resolution_with_cv2,
+            "validate_clip_decode": validate_clip_decode,
             "min_source_width": min_source_width,
             "min_source_height": min_source_height,
             "max_source_width": max_source_width,

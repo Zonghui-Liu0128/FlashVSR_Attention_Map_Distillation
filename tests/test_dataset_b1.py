@@ -26,10 +26,10 @@ sys.modules["flashvsr_b1.data.degradation.basic_vsr_dataset_hw_crop"] = _fake_pa
 from flashvsr_b1.data.dataset_b1 import DatasetB1
 
 
-def _fake_parent_item(h, w):
+def _fake_parent_item(h, w, frames=85):
     return {
-        "lr": torch.zeros(3, 85, h, w),
-        "hr": torch.zeros(3, 85, h * 4, w * 4),
+        "lr": torch.zeros(3, frames, h, w),
+        "hr": torch.zeros(3, frames, h * 4, w * 4),
         "sample_meta": {},
         "degradation_meta": {},
         "data_name": "dummy.mp4",
@@ -70,6 +70,18 @@ def test_parent_fields_preserved():
         item = ds[0]
         for k in ["lr", "hr", "sample_meta", "degradation_meta", "data_name"]:
             assert k in item
+
+
+def test_latent_shape_time_follows_truncated_45_frame_clip():
+    with patch.object(DatasetB1, "__init__", lambda self, *a, **k: None), patch.object(
+        DatasetB1.__bases__[0],
+        "__getitem__",
+        lambda self, idx: _fake_parent_item(16, 32, frames=45),
+    ):
+        ds = DatasetB1()
+        item = ds[0]
+        assert item["lr"].shape[1] == 45
+        assert item["latent_shape"] == (12, 64, 120)
 
 
 def test_real_parent_tchw_zero_one_video_is_normalized_to_flashvsr_contract():

@@ -42,10 +42,16 @@ class DatasetB1(BasicVSRDataset_hw_crop):
             )
         item["lr"] = self._to_flashvsr_video_tensor(item["lr"], "lr")
         item["hr"] = self._to_flashvsr_video_tensor(item["hr"], "hr")
+        if item["lr"].shape[1] != item["hr"].shape[1]:
+            raise ValueError(
+                f"DatasetB1 expected lr/hr to have the same frame count; "
+                f"got lr={tuple(item['lr'].shape)}, hr={tuple(item['hr'].shape)}"
+            )
         h, w = item["lr"].shape[-2:]
         landscape = w > h
         item["aspect_bucket"] = "landscape" if landscape else "portrait"
-        item["latent_shape"] = (22, 64, 120) if landscape else (22, 120, 64)
+        latent_t = self._latent_time_from_frame_count(int(item["lr"].shape[1]))
+        item["latent_shape"] = (latent_t, 64, 120) if landscape else (latent_t, 120, 64)
         return item
 
     @staticmethod
@@ -68,6 +74,12 @@ class DatasetB1(BasicVSRDataset_hw_crop):
         if out.numel() and float(out.amin()) >= 0.0 and float(out.amax()) <= 1.0:
             out = out.mul(2).sub(1)
         return out
+
+    @staticmethod
+    def _latent_time_from_frame_count(frame_count: int) -> int:
+        if frame_count <= 0:
+            raise ValueError(f"DatasetB1 expected positive frame count; got {frame_count}")
+        return (frame_count + 3) // 4
 
     @staticmethod
     def _bucket_for_sample(sample: dict[str, Any]) -> str:

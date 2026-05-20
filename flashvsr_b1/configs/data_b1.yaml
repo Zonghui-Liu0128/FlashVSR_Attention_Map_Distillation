@@ -1,14 +1,16 @@
 # Metadata-driven FlashVSR/LSWA data config for internal B200 smoke/bring-up.
-# Target: 85 frames, 1024x1920 crop, no resize before degradation.
+# Target: train on first 45 frames from existing 85-frame sample index, 1024x1920 crop.
 
 train_mode: 0
 
 datapath_config_method: metadata_json
 metadata_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_LSWA_B200-main/data/animal_videos/stage1/scenes.json"
-sample_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_LSWA_B200-main/data/animal_videos/stage1/train_samples.json"
+sample_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_LSWA_B200-main/data/animal_videos/stage1/train_samples_b1_85_1024x1920_validated.json"
 rebuild_sample_json: false                          # set true after changing crop/frame/sampling policy
 read_resolution_with_cv2: true
 strict_path_exists: true
+validate_clip_decode: true                          # when rebuilding, drop clips that cannot decode frame_num frames
+allow_frame_truncation: true                         # accept 85-frame sample indexes and read only frame_num frames
 
 # video reader
 reader_backend: "cv2"
@@ -18,8 +20,8 @@ strict_decode: true
 allow_decode_fail_pad: false
 max_retry: 5
 
-# clip sampling: scene -> 85-frame clips. Tail clip is added to use the end of long scenes.
-frame_num: 85
+# clip sampling: use existing 85-frame clips, but train-time reading truncates to 45 frames.
+frame_num: 45
 temporal_stride: 85
 include_tail_clip: true
 max_clips_per_scene: 0          # 0 = unlimited
@@ -51,7 +53,7 @@ save_images_: false
 save_degradation_stages: false
 vis_output_dir: "data/test_samples/debug"
 vis_num_samples: 0
-vis_frame_indices: [0, 8, 16, 32, 42, 84]
+vis_frame_indices: [0, 8, 16, 32, 42, 44]
 
 # GT augmentation: disabled for clean HQ target.
 random_gain_: false

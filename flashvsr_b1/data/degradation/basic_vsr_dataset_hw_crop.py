@@ -9,7 +9,7 @@ existing stage3 pipeline:
     data_name   -> stable sample id
 
 The new path source is `datapath_config_method: metadata_json`. It expands:
-metadata.json -> scenes -> 89-frame clips -> resolution-aware crops, writes a
+metadata.json -> scenes -> fixed-frame clips -> resolution-aware crops, writes a
 frozen sample.json next to metadata.json, then trains from that sample.json.
 """
 
@@ -29,7 +29,7 @@ import torch
 # import torch.nn.functional as F
 from torchvision.utils import save_image
 
-from ..sample_index import build_sample_records_from_metadata
+from ..sample_index import build_sample_records_from_metadata, validate_sample_index_contract
 from .operators import *
 from .degradations import (
     USMSharp,
@@ -63,6 +63,7 @@ class BasicVSRDataset_hw_crop(torch.utils.data.Dataset):
         self.max_retry = int(opt.get("max_retry", 5))
         self.shuffle_samples = bool(opt.get("shuffle_samples", True))
         self.return_degradation_stages = bool(opt.get("return_degradation_stages", False))
+        self.allow_frame_truncation = bool(opt.get("allow_frame_truncation", False))
 
         # color/gain options; default disabled for clean GT
         self.random_color_prob = opt.get("random_color_prob", 0)
@@ -168,6 +169,16 @@ class BasicVSRDataset_hw_crop(torch.utils.data.Dataset):
             print(f"[BasicVSRDataset_hw_crop] stats: {sample_index.get('stats', {})}")
         with open(sample_json_path, "r", encoding="utf-8") as f:
             sample_index = json.load(f)
+        validate_sample_index_contract(
+            sample_index,
+            {
+                "frame_num": self.frame_num,
+                "crop_width": self.actual_crop_width,
+                "crop_height": self.actual_crop_height,
+                "allow_frame_truncation": self.allow_frame_truncation,
+            },
+            sample_json_path=sample_json_path,
+        )
         samples = sample_index.get("samples", [])
         if not samples:
             raise RuntimeError(f"No samples found in sample_json_path={sample_json_path}")
@@ -218,7 +229,10 @@ class BasicVSRDataset_hw_crop(torch.utils.data.Dataset):
     def _get_item_from_metadata_sample(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         path = sample["path"]
         clip_start = int(sample["clip_start"])
-        frame_num = int(sample.get("frame_num", self.frame_num))
+        sample_frame_num = int(sample.get("frame_num", self.frame_num))
+        frame_num = sample_frame_num
+        if self.allow_frame_truncation and sample_frame_num >= self.frame_num:
+            frame_num = self.frame_num
         crop_x = int(sample["crop_x"])
         crop_y = int(sample["crop_y"])
         crop_w = int(sample.get("crop_width", self.actual_crop_width))

@@ -243,6 +243,57 @@ def test_prepare_batch_pads_lq_projector_tail_buffer_for_85_frame_contract():
     assert hr.shape[2] == 85
 
 
+def test_prepare_batch_pads_lq_projector_tail_buffer_for_45_frame_truncated_contract():
+    """45 target frames plus the 4-frame projector tail produce 12 token frames."""
+    from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
+    from flashvsr_b1.pipelines.b1_pipeline import B1Pipeline
+
+    cfg = FlashVSRTinyConfig.default()
+
+    class OfficialLikeLQProj(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen_shape = None
+
+        def forward(self, lr_rgb):
+            self.seen_shape = tuple(lr_rgb.shape)
+            b, _c, t, h, w = lr_rgb.shape
+            temporal_tokens = (int(t) - 1) // 4
+            spatial_tokens = (int(h) // 16) * (int(w) // 16)
+            return torch.zeros(
+                b,
+                cfg.dim,
+                temporal_tokens * spatial_tokens,
+                dtype=lr_rgb.dtype,
+                device=lr_rgb.device,
+            )
+
+    class FakeDit(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.in_dim = cfg.in_dim
+            self.patch_size = cfg.patch_size
+
+    pipe = B1Pipeline.__new__(B1Pipeline)
+    torch.nn.Module.__init__(pipe)
+    pipe.dit = FakeDit()
+    pipe.lq_proj = OfficialLikeLQProj()
+    pipe.cfg_single_step_t = 999
+
+    batch = {
+        "lr": torch.zeros(1, 3, 45, 16, 16),
+        "hr": torch.zeros(1, 3, 45, 16, 16),
+        "latent_shape": (12, 1, 1),
+    }
+
+    LR_latents, z_t, _t_star, hr = B1Pipeline.prepare_batch(pipe, batch)
+
+    assert pipe.lq_proj.seen_shape == (1, 3, 49, 16, 16)
+    assert LR_latents[0].shape == (1, 12, cfg.dim)
+    assert z_t.shape[2] == 12
+    assert hr.shape[2] == 45
+
+
 def test_prepare_batch_rejects_btchw_before_conv3d_channel_error():
     """BTCHW would make frame count look like channels; fail at pipeline boundary."""
     from flashvsr_b1.models.flashvsr_components import FlashVSRTinyConfig
