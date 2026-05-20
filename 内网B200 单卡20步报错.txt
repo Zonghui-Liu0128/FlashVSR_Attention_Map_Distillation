@@ -21,10 +21,25 @@ Traceback (most recent call last):
   File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 397, in forward
     x, aux = self._forward_block_b1(
              ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 344, in _forward_block_b1
-    input_x = wan_video_dit.modulate(block.norm2(x), shift_mlp, scale_mlp)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/DiffSynth-Studio/diffsynth/models/wan_video_dit.py", line 67, in modulate
-    return (x * (1 + scale) + shift)
-            ~~^~~~~~~~~~~~~
-torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 990.00 MiB. GPU 0 has a total capacity of 178.35 GiB of which 345.94 MiB is free. Including non-PyTorch memory, this process has 177.98 GiB memory in use. Of the allocated memory 175.74 GiB is allocated by PyTorch, and 1.47 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/flashvsr_b1/models/wan_dit_b1.py", line 343, in _forward_block_b1
+    x = x + block.cross_attn(block.norm3(x), context)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/DiffSynth-Studio/diffsynth/models/wan_video_dit.py", line 192, in forward
+    q = self.norm_q(self.q(x))
+        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/condaenv/flashvsr_b200/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation/DiffSynth-Studio/diffsynth/models/wan_video_dit.py", line 126, in forward
+    return self.norm(x.float()).to(dtype) * self.weight
+                     ^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 540.00 MiB. GPU 0 has a total capacity of 178.35 GiB of which 433.94 MiB is free. Including non-PyTorch memory, this process has 177.90 GiB memory in use. Of the allocated memory 176.44 GiB is allocated by PyTorch, and 706.95 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
