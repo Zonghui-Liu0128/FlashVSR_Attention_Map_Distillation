@@ -8,10 +8,10 @@ block_size: [2, 8, 8]
 window_size: [2, 21, 21]                  # LSWA 用
 distill_layers: [4, 9, 14, 19, 24, 29]
 
-teacher_ckpt: /path/to/flashvsr/v1.1_tiny.safetensors
-student_ckpt: /path/to/flashvsr/v1.1_tiny.safetensors
-tc_decoder_ckpt: /path/to/TCDecoder.ckpt
-lq_proj_ckpt: /path/to/LQ_proj_in.ckpt
+teacher_ckpt: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1/diffusion_pytorch_model_streaming_dmd.safetensors 
+student_ckpt: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1/diffusion_pytorch_model_streaming_dmd.safetensors
+tc_decoder_ckpt: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1/TCDecoder.ckpt
+lq_proj_ckpt: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1/LQ_proj_in.ckpt
 
 single_step_t: 999                        # one-step inference t
 
@@ -38,8 +38,8 @@ data:
   prefetch_factor: 2
 
 eval:
-  val_json: /path/to/val_samples.json
-  every_steps: 1000
+  val_json: /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/test_samples.json
+  every_steps: 500
   metrics: [psnr, ssim, lpips, dists, sparsity_rate, fps_720p, fps_1080p]
 
 logging:
