@@ -165,10 +165,10 @@ for row in rows:
     expected_w = int(row.get("Width") or row.get("width") or 0)
     expected_h = int(row.get("Height") or row.get("height") or 0)
     expected_frames = int(float(row.get("Frame") or row.get("Frames") or row.get("frames") or 0))
-    if (width, height, frames) != (expected_w, expected_h, expected_frames):
-        bad.append((str(out_path), width, height, frames, fps))
+    if (width, height) != (expected_w, expected_h) or frames <= 0 or (expected_frames > 0 and frames > expected_frames):
+        bad.append((str(out_path), width, height, frames, fps, "expected_max_frames", expected_frames))
 
-print(f"[verify] rows={len(rows)} missing_lq={len(missing)} bad_shape={len(bad)} total_bytes={total_bytes}")
+print(f"[verify] rows={len(rows)} missing_lq={len(missing)} bad_output={len(bad)} total_bytes={total_bytes}")
 if missing[:20]:
     print("[verify] first missing LQ paths:")
     for path in missing[:20]:

@@ -206,7 +206,40 @@ def tensor_to_uint8_rgb(video: torch.Tensor) -> np.ndarray:
     return video.detach().cpu().float().clamp(0.0, 1.0).mul(255.0).round().byte().numpy()
 
 
-def read_rgb_video_cv2(path: str | Path, *, frame_num: int, strict_decode: bool = True) -> torch.Tensor:
+def probe_video_frame_count_cv2(path: str | Path) -> int | None:
+    import cv2
+
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return None
+    try:
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        cap.release()
+    return frame_count if frame_count > 0 else None
+
+
+def choose_requested_frame_num(
+    *,
+    configured_frame_num: int | None,
+    metadata_frame_num: int | None,
+    probed_frame_count: int | None,
+) -> int:
+    target = int(configured_frame_num or metadata_frame_num or probed_frame_count or 0)
+    if target <= 0:
+        raise ValueError("Cannot determine video frame count from config, metadata, or probe result")
+    if probed_frame_count is not None and int(probed_frame_count) > 0 and int(probed_frame_count) < target:
+        return int(probed_frame_count)
+    return target
+
+
+def read_rgb_video_cv2(
+    path: str | Path,
+    *,
+    frame_num: int,
+    strict_decode: bool = True,
+    allow_short: bool = False,
+) -> torch.Tensor:
     import cv2
 
     cap = cv2.VideoCapture(str(path))
@@ -217,6 +250,8 @@ def read_rgb_video_cv2(path: str | Path, *, frame_num: int, strict_decode: bool 
         for frame_idx in range(int(frame_num)):
             ret, frame_bgr = cap.read()
             if not ret or frame_bgr is None:
+                if allow_short and frames:
+                    break
                 if strict_decode or not frames:
                     raise RuntimeError(f"Decode failed: path={path}, frame={frame_idx}")
                 frame_bgr = frames[-1][:, :, ::-1].copy()
@@ -224,6 +259,8 @@ def read_rgb_video_cv2(path: str | Path, *, frame_num: int, strict_decode: bool 
             frames.append(frame_rgb)
     finally:
         cap.release()
+    if not frames:
+        raise RuntimeError(f"Decode failed: path={path}, frame=0")
     arr = np.stack(frames, axis=0).astype(np.float32) / 255.0
     arr = np.transpose(arr, (0, 3, 1, 2))
     return torch.from_numpy(arr).contiguous()
@@ -707,8 +744,18 @@ def degrade_csv_to_lq(
             continue
         if seed is not None:
             seed_everything(int(seed) + int(item.row_index))
-        frame_num = int(configured_frames or item.frame_num)
-        gt = read_rgb_video_cv2(item.gt_path, frame_num=frame_num)
+        probed_frame_count = probe_video_frame_count_cv2(item.gt_path)
+        frame_num = choose_requested_frame_num(
+            configured_frame_num=configured_frames,
+            metadata_frame_num=item.frame_num,
+            probed_frame_count=probed_frame_count,
+        )
+        gt = read_rgb_video_cv2(item.gt_path, frame_num=frame_num, allow_short=True)
+        if gt.shape[0] < frame_num:
+            print(
+                "[offline_degradation] short decode preserved: "
+                f"path={item.gt_path} requested={frame_num} decoded={gt.shape[0]}"
+            )
         if target_h is not None and gt.shape[-2] != target_h:
             raise RuntimeError(f"Height mismatch for {item.gt_path}: got {gt.shape[-2]}, expected {target_h}")
         if target_w is not None and gt.shape[-1] != target_w:

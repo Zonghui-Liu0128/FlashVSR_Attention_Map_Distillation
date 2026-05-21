@@ -131,7 +131,7 @@ with open("data/metadata_wxh_960x720.csv", newline="", encoding="utf-8-sig") as 
     rows = list(csv.DictReader(f))
 
 missing = []
-bad_shape = []
+bad_output = []
 for row in rows:
     p = lq_dir / Path(row["Path"]).name
     if not p.exists():
@@ -142,16 +142,17 @@ for row in rows:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
-    if (width, height, frames) != (960, 720, 93):
-        bad_shape.append((str(p), width, height, frames))
+    expected_frames = int(float(row.get("Frame") or row.get("Frames") or row.get("frames") or 0))
+    if (width, height) != (960, 720) or frames <= 0 or (expected_frames > 0 and frames > expected_frames):
+        bad_output.append((str(p), width, height, frames, "expected_max_frames", expected_frames))
 
 print("total", len(rows))
 print("missing", len(missing))
-print("bad_shape", len(bad_shape))
+print("bad_output", len(bad_output))
 if missing[:5]:
     print("missing_head", missing[:5])
-if bad_shape[:5]:
-    print("bad_shape_head", bad_shape[:5])
+if bad_output[:5]:
+    print("bad_output_head", bad_output[:5])
 PY
 ```
 
@@ -159,8 +160,10 @@ PY
 
 ```text
 missing 0
-bad_shape 0
+bad_output 0
 ```
+
+注意：如果 GT 实际可解码帧数小于 `frame_num: 93`，离线脚本会保留该视频的原始可解码帧数，不会补到 93 帧。
 
 ## 6. 后续训练切换点
 

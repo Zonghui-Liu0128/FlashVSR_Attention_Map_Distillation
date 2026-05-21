@@ -9,6 +9,7 @@ from Prepare.offline_degradation import (
     OfflineDegrader,
     build_lq_plan,
     choose_output_fps,
+    choose_requested_frame_num,
     load_degradation_config,
     resolve_lq_output_path,
     tensor_to_uint8_rgb,
@@ -115,6 +116,28 @@ def test_choose_output_fps_prefers_explicit_override_over_metadata():
 
 def test_choose_output_fps_uses_metadata_when_override_is_missing():
     assert choose_output_fps(metadata_fps=93.0, output_fps=None) == 93.0
+
+
+def test_choose_requested_frame_num_preserves_video_shorter_than_target():
+    assert (
+        choose_requested_frame_num(
+            configured_frame_num=93,
+            metadata_frame_num=93,
+            probed_frame_count=90,
+        )
+        == 90
+    )
+
+
+def test_choose_requested_frame_num_keeps_configured_frame_num_for_normal_video():
+    assert (
+        choose_requested_frame_num(
+            configured_frame_num=93,
+            metadata_frame_num=93,
+            probed_frame_count=93,
+        )
+        == 93
+    )
 
 
 def test_validate_gt_paths_reports_missing_entries(tmp_path):
