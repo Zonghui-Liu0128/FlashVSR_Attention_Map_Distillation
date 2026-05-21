@@ -64,6 +64,8 @@ PY
 
 默认输出是上采样回 `960x720` 的模型输入版 LQ，匹配当前 FlashVSR 训练输入契约。若要检查原生低分辨率效果，可临时运行：
 
+配置里的 `output_fps: 30.0` 只影响 mp4 播放速度，不改变帧数；每个 LQ 仍应是 93 帧。之前直接沿用 metadata CSV 的 `FPS=93.0` 会导致预览视频显示为 93 fps。
+
 ```bash
 python -m Prepare.offline_degradation \
   --config Prepare/degradation_config_960x720.yaml \

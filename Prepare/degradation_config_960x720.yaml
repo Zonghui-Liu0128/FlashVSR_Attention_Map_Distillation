@@ -10,6 +10,7 @@ crop_height: 720
 crop_width: 960
 scl_factor: 4.0
 input_bits: 10
+output_fps: 30.0
 
 # Real-ESRGAN-style degradation flags.
 degradation_1: true

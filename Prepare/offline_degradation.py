@@ -145,6 +145,18 @@ def validate_gt_paths(metadata_csv_path: str | Path = DEFAULT_METADATA_CSV, *, m
     return [item.gt_path for item in build_lq_plan(metadata_csv_path, max_videos=max_videos) if not item.gt_path.exists()]
 
 
+def choose_output_fps(metadata_fps: float, output_fps: float | None = None) -> float:
+    if output_fps is not None:
+        output_fps = float(output_fps)
+        if output_fps <= 0:
+            raise ValueError(f"output_fps must be positive, got {output_fps}")
+        return output_fps
+    metadata_fps = float(metadata_fps)
+    if metadata_fps <= 0:
+        return 30.0
+    return metadata_fps
+
+
 def seed_everything(seed: int | None) -> None:
     if seed is None:
         return
@@ -634,6 +646,7 @@ def degrade_csv_to_lq(
     codec: str = "mp4v",
     save_native_lr: bool = False,
     strict_paths: bool = True,
+    output_fps: float | None = None,
 ) -> list[Path]:
     seed_everything(seed)
     missing = validate_gt_paths(metadata_csv_path, max_videos=max_videos)
@@ -661,7 +674,12 @@ def degrade_csv_to_lq(
         out_tensor = result.lr_native if save_native_lr else result.lq_up
         if out_tensor is None:
             raise RuntimeError("Internal error: native LR output was requested but not returned")
-        write_rgb_video_cv2(tensor_to_uint8_rgb(out_tensor), item.lq_path, fps=item.fps, codec=codec)
+        write_rgb_video_cv2(
+            tensor_to_uint8_rgb(out_tensor),
+            item.lq_path,
+            fps=choose_output_fps(item.fps, output_fps=output_fps),
+            codec=codec,
+        )
         written.append(item.lq_path)
     return written
 
@@ -675,6 +693,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--max-videos", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--codec", default="mp4v")
+    parser.add_argument("--output-fps", type=float, default=None, help="Override output mp4 FPS. Defaults to config output_fps, then metadata FPS.")
     parser.add_argument("--save-native-lr", action="store_true", help="Write native 1/scl_factor LQ instead of upsampled model-input LQ.")
     parser.add_argument("--no-strict-paths", action="store_true", help="Skip missing GT paths instead of failing fast.")
     return parser
@@ -685,6 +704,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_degradation_config(args.config)
     metadata_csv = Path(args.metadata_csv or cfg.get("metadata_csv_path", DEFAULT_METADATA_CSV))
     output_dir = Path(args.output_dir or cfg.get("lq_output_dir", DEFAULT_LQ_OUTPUT_DIR))
+    output_fps = args.output_fps if args.output_fps is not None else _as_float(cfg.get("output_fps"), None)
     written = degrade_csv_to_lq(
         cfg,
         metadata_csv_path=metadata_csv,
@@ -695,6 +715,7 @@ def main(argv: list[str] | None = None) -> int:
         codec=args.codec,
         save_native_lr=args.save_native_lr,
         strict_paths=not args.no_strict_paths,
+        output_fps=output_fps,
     )
     for path in written:
         print(path)

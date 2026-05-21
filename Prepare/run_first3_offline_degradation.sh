@@ -7,6 +7,7 @@ cd "${PROJECT_ROOT}"
 METADATA_CSV="${1:-data/metadata_wxh_960x720.csv}"
 OUTPUT_DIR="${2:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq}"
 CONFIG="${3:-Prepare/degradation_config_960x720.yaml}"
+OUTPUT_FPS="${4:-}"
 
 python - "${METADATA_CSV}" <<'PY'
 import csv
@@ -31,13 +32,19 @@ if missing:
     raise SystemExit(2)
 PY
 
-python -m Prepare.offline_degradation \
+cmd=(python -m Prepare.offline_degradation \
   --config "${CONFIG}" \
   --metadata-csv "${METADATA_CSV}" \
   --output-dir "${OUTPUT_DIR}" \
   --max-videos 3 \
   --seed 42 \
-  --overwrite
+  --overwrite)
+
+if [[ -n "${OUTPUT_FPS}" ]]; then
+  cmd+=(--output-fps "${OUTPUT_FPS}")
+fi
+
+"${cmd[@]}"
 
 python - "${METADATA_CSV}" "${OUTPUT_DIR}" <<'PY'
 import csv

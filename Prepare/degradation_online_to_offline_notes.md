@@ -130,6 +130,8 @@ gt/000000_xxx_960x720_93f.mp4
 
 注意：默认写出的是“模型输入版 LQ”，也就是退化后又上采样回 `720x960` 的 LQ，匹配当前训练里的 `aigc_input/lr` 契约。如果想保存真正原生低分辨率的 LQ，可加 `--save-native-lr`，当前配置下会写出 `240x180`。
 
+`output_fps: 30.0` 只控制输出 mp4 的播放 FPS，不改变帧数。当前 metadata CSV 里的前三行是 `Frame=93,FPS=93.0,Duration=1.0`；如果不显式覆盖 FPS，`cv2.VideoWriter` 会把 LQ 写成 93 fps，不利于普通预览。
+
 ## 5. 正式从在线切到离线时的建议
 
 建议分两步做：

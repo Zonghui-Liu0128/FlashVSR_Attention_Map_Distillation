@@ -8,6 +8,7 @@ from Prepare.offline_degradation import (
     DEFAULT_METADATA_CSV,
     OfflineDegrader,
     build_lq_plan,
+    choose_output_fps,
     load_degradation_config,
     resolve_lq_output_path,
     tensor_to_uint8_rgb,
@@ -77,6 +78,14 @@ def test_build_lq_plan_uses_metadata_order_and_lq_output_dir(tmp_path):
     assert plan[0].lq_path == tmp_path / "lq" / "gt0.mp4"
     assert plan[0].fps == 93.0
     assert plan[0].frame_num == 93
+
+
+def test_choose_output_fps_prefers_explicit_override_over_metadata():
+    assert choose_output_fps(metadata_fps=93.0, output_fps=30.0) == 30.0
+
+
+def test_choose_output_fps_uses_metadata_when_override_is_missing():
+    assert choose_output_fps(metadata_fps=93.0, output_fps=None) == 93.0
 
 
 def test_validate_gt_paths_reports_missing_entries(tmp_path):
