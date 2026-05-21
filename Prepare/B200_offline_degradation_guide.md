@@ -84,15 +84,37 @@ python -m Prepare.offline_degradation \
 前三个视频确认退化效果可接受后，执行全量：
 
 ```bash
-python -m Prepare.offline_degradation \
-  --config Prepare/degradation_config_960x720.yaml \
-  --metadata-csv data/metadata_wxh_960x720.csv \
-  --output-dir /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq \
-  --seed 42 \
-  --overwrite
+./Prepare/run_all_offline_degradation.sh
 ```
 
-如果需要保留已有 LQ，只去掉 `--overwrite`。
+该脚本会自动按 `min(8, CPU核数, 样本数)` 个 worker 并行分片。默认跳过已存在的 LQ，适合断点续跑；如果要强制重写，使用：
+
+```bash
+OVERWRITE=1 ./Prepare/run_all_offline_degradation.sh
+```
+
+常用参数顺序与前三视频脚本一致，第四个参数是 worker 数，第五个参数是输出 FPS：
+
+```bash
+./Prepare/run_all_offline_degradation.sh \
+  data/metadata_wxh_960x720.csv \
+  /srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq \
+  Prepare/degradation_config_960x720.yaml \
+  8 \
+  30
+```
+
+调试时可以限制样本数：
+
+```bash
+MAX_VIDEOS=64 ./Prepare/run_all_offline_degradation.sh
+```
+
+日志默认写入：
+
+```text
+/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/_degrade_logs/<timestamp>/
+```
 
 ## 5. 输出核对
 

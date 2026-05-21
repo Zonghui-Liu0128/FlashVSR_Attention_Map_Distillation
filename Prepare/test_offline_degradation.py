@@ -78,6 +78,35 @@ def test_build_lq_plan_uses_metadata_order_and_lq_output_dir(tmp_path):
     assert plan[0].lq_path == tmp_path / "lq" / "gt0.mp4"
     assert plan[0].fps == 93.0
     assert plan[0].frame_num == 93
+    assert plan[0].row_index == 0
+
+
+def test_build_lq_plan_supports_deterministic_modulo_shards(tmp_path):
+    rows = []
+    for idx in range(5):
+        gt = tmp_path / f"gt{idx}.mp4"
+        gt.write_bytes(b"placeholder")
+        rows.append(f"{gt},720,960,93,30.0,3.1\n")
+    metadata = tmp_path / "metadata.csv"
+    metadata.write_text("Path,Height,Width,Frame,FPS,Duration\n" + "".join(rows), encoding="utf-8")
+
+    shard0 = build_lq_plan(metadata, tmp_path / "lq", shard_count=2, shard_index=0)
+    shard1 = build_lq_plan(metadata, tmp_path / "lq", shard_count=2, shard_index=1)
+
+    assert [item.row_index for item in shard0] == [0, 2, 4]
+    assert [item.row_index for item in shard1] == [1, 3]
+
+
+def test_build_lq_plan_rejects_invalid_shard_index(tmp_path):
+    metadata = tmp_path / "metadata.csv"
+    metadata.write_text("Path,Height,Width,Frame,FPS,Duration\n", encoding="utf-8")
+
+    try:
+        build_lq_plan(metadata, tmp_path / "lq", shard_count=2, shard_index=2)
+    except ValueError as exc:
+        assert "shard_index" in str(exc)
+    else:
+        raise AssertionError("Expected invalid shard index to raise ValueError")
 
 
 def test_choose_output_fps_prefers_explicit_override_over_metadata():

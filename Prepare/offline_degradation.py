@@ -33,6 +33,7 @@ DEFAULT_LQ_OUTPUT_DIR = Path(
 
 @dataclass(frozen=True)
 class VideoPlan:
+    row_index: int
     gt_path: Path
     lq_path: Path
     fps: float
@@ -116,13 +117,24 @@ def build_lq_plan(
     output_dir: str | Path = DEFAULT_LQ_OUTPUT_DIR,
     *,
     max_videos: int = 0,
+    shard_count: int = 1,
+    shard_index: int = 0,
 ) -> list[VideoPlan]:
+    shard_count = int(shard_count)
+    shard_index = int(shard_index)
+    if shard_count <= 0:
+        raise ValueError(f"shard_count must be positive, got {shard_count}")
+    if shard_index < 0 or shard_index >= shard_count:
+        raise ValueError(f"shard_index must be in [0, {shard_count}), got {shard_index}")
+
     rows = iter_metadata_rows(metadata_csv_path)
     if max_videos and int(max_videos) > 0:
         rows = rows[: int(max_videos)]
 
     plan: list[VideoPlan] = []
-    for row in rows:
+    for row_index, row in enumerate(rows):
+        if row_index % shard_count != shard_index:
+            continue
         gt = Path(str(_row_value(row, "Path", "path", "video_path") or "").strip())
         if not str(gt):
             raise ValueError(f"Metadata row is missing Path: {row}")
@@ -130,6 +142,7 @@ def build_lq_plan(
         frame_num = _as_int(_row_value(row, "Frame", "Frames", "frames", "total_frames"), 0) or 0
         plan.append(
             VideoPlan(
+                row_index=row_index,
                 gt_path=gt,
                 lq_path=resolve_lq_output_path(gt, output_dir),
                 fps=float(fps),
@@ -141,8 +154,23 @@ def build_lq_plan(
     return plan
 
 
-def validate_gt_paths(metadata_csv_path: str | Path = DEFAULT_METADATA_CSV, *, max_videos: int = 0) -> list[Path]:
-    return [item.gt_path for item in build_lq_plan(metadata_csv_path, max_videos=max_videos) if not item.gt_path.exists()]
+def validate_gt_paths(
+    metadata_csv_path: str | Path = DEFAULT_METADATA_CSV,
+    *,
+    max_videos: int = 0,
+    shard_count: int = 1,
+    shard_index: int = 0,
+) -> list[Path]:
+    return [
+        item.gt_path
+        for item in build_lq_plan(
+            metadata_csv_path,
+            max_videos=max_videos,
+            shard_count=shard_count,
+            shard_index=shard_index,
+        )
+        if not item.gt_path.exists()
+    ]
 
 
 def choose_output_fps(metadata_fps: float, output_fps: float | None = None) -> float:
@@ -647,14 +675,27 @@ def degrade_csv_to_lq(
     save_native_lr: bool = False,
     strict_paths: bool = True,
     output_fps: float | None = None,
+    shard_count: int = 1,
+    shard_index: int = 0,
 ) -> list[Path]:
     seed_everything(seed)
-    missing = validate_gt_paths(metadata_csv_path, max_videos=max_videos)
+    missing = validate_gt_paths(
+        metadata_csv_path,
+        max_videos=max_videos,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
     if missing and strict_paths:
         lines = "\n".join(str(p) for p in missing[:20])
         raise FileNotFoundError(f"Missing GT videos ({len(missing)}):\n{lines}")
 
-    plan = build_lq_plan(metadata_csv_path, output_dir, max_videos=max_videos)
+    plan = build_lq_plan(
+        metadata_csv_path,
+        output_dir,
+        max_videos=max_videos,
+        shard_count=shard_count,
+        shard_index=shard_index,
+    )
     degrader = OfflineDegrader(cfg)
     written: list[Path] = []
     configured_frames = _as_int(cfg.get("frame_num"), None)
@@ -664,6 +705,8 @@ def degrade_csv_to_lq(
         if item.lq_path.exists() and not overwrite:
             written.append(item.lq_path)
             continue
+        if seed is not None:
+            seed_everything(int(seed) + int(item.row_index))
         frame_num = int(configured_frames or item.frame_num)
         gt = read_rgb_video_cv2(item.gt_path, frame_num=frame_num)
         if target_h is not None and gt.shape[-2] != target_h:
@@ -691,6 +734,8 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--max-videos", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1, help="Total number of modulo shards for parallel preprocessing.")
+    parser.add_argument("--shard-index", type=int, default=0, help="Current modulo shard index in [0, shard-count).")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--codec", default="mp4v")
     parser.add_argument("--output-fps", type=float, default=None, help="Override output mp4 FPS. Defaults to config output_fps, then metadata FPS.")
@@ -716,6 +761,8 @@ def main(argv: list[str] | None = None) -> int:
         save_native_lr=args.save_native_lr,
         strict_paths=not args.no_strict_paths,
         output_fps=output_fps,
+        shard_count=args.shard_count,
+        shard_index=args.shard_index,
     )
     for path in written:
         print(path)
