@@ -10,8 +10,17 @@ FLASHVSR_CKPT_DIR=${FLASHVSR_CKPT_DIR:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l
 BASE_MODEL_WEIGHT=${BASE_MODEL_WEIGHT:-${FLASHVSR_CKPT_DIR}/diffusion_pytorch_model_streaming_dmd.safetensors}
 LQ_PROJ_CKPT=${LQ_PROJ_CKPT:-${FLASHVSR_CKPT_DIR}/LQ_proj_in.ckpt}
 TC_DECODER_CKPT=${TC_DECODER_CKPT:-${FLASHVSR_CKPT_DIR}/TCDecoder.ckpt}
+WAN_VAE_CKPT=${WAN_VAE_CKPT:-${FLASHVSR_CKPT_DIR}/Wan2.1_VAE.pth}
 LSWA_STUDENT_CKPT=${LSWA_STUDENT_CKPT:-}
-SAVE_ROOT=${SAVE_ROOT:-outputs/baseline_flashvsr_v1.1_tiny/animal_test}    # predicated hq保存地址
+DECODER=${DECODER:-tcdecoder} # tcdecoder or wanvae
+DECODER_NORMALIZED=$(printf '%s' "$DECODER" | tr '[:upper:]' '[:lower:]')
+if [[ -z "${SAVE_ROOT:-}" ]]; then
+  if [[ "$DECODER_NORMALIZED" == "wanvae" || "$DECODER_NORMALIZED" == "wan" || "$DECODER_NORMALIZED" == "wan_vae" || "$DECODER_NORMALIZED" == "wan-vae" || "$DECODER_NORMALIZED" == "full" ]]; then
+    SAVE_ROOT=outputs/baseline_flashvsr_v1.1_wanvae/animal_test
+  else
+    SAVE_ROOT=outputs/baseline_flashvsr_v1.1_tiny/animal_test
+  fi
+fi
 WINDOW_SIZE=${WINDOW_SIZE:-2,21,21}
 MAX_VIDEOS=${MAX_VIDEOS:-0}
 MAX_FRAMES=${MAX_FRAMES:-0}
@@ -30,6 +39,8 @@ COMMON_ARGS=(
   --flashvsr-root "$FLASHVSR_ROOT"
   --lq-proj-ckpt "$LQ_PROJ_CKPT"
   --tc-decoder-ckpt "$TC_DECODER_CKPT"
+  --wan-vae-ckpt "$WAN_VAE_CKPT"
+  --decoder "$DECODER"
   --max-videos "$MAX_VIDEOS"
   --max-frames "$MAX_FRAMES"
   --seed "$SEED"

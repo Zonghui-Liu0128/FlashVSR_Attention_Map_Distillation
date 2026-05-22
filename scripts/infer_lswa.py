@@ -13,9 +13,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from flashvsr_b1.inference.streaming_compare import (
     add_flashvsr_to_path,
     build_output_path,
+    create_flashvsr_inference_pipeline,
+    DECODER_ARG_CHOICES,
+    decoder_model_type,
     discover_inputs,
     dtype_from_name,
+    finalize_flashvsr_inference_pipeline,
     normalize_dit_state_dict,
+    normalize_decoder_name,
     parse_window_size,
     prepare_lq_video,
     replace_dit_with_lswa,
@@ -26,28 +31,27 @@ from flashvsr_b1.inference.streaming_compare import (
 
 def init_pipeline(args):
     add_flashvsr_to_path(args.flashvsr_root)
-    from diffsynth import FlashVSRTinyPipeline, ModelManager
-    from utils.TCDecoder import build_tcdecoder
-    from utils.utils import Causal_LQ4x_Proj
-
     dtype = dtype_from_name(args.dtype)
-    mm = ModelManager(torch_dtype=dtype, device="cpu")
-    mm.load_models([args.base_model_weight])
-    pipe = FlashVSRTinyPipeline.from_model_manager(mm, device=args.device)
+    pipe = create_flashvsr_inference_pipeline(
+        decoder=args.decoder,
+        model_weight=args.base_model_weight,
+        wan_vae_ckpt=args.wan_vae_ckpt,
+        tc_decoder_ckpt=args.tc_decoder_ckpt,
+        dtype=dtype,
+        device=args.device,
+    )
     replace_dit_with_lswa(
         pipe,
         window_size=parse_window_size(args.window_size),
         student_ckpt=args.student_ckpt,
     )
-    pipe.denoising_model().LQ_proj_in = Causal_LQ4x_Proj(in_dim=3, out_dim=1536, layer_num=1).to(args.device, dtype=dtype)
-    pipe.denoising_model().LQ_proj_in.load_state_dict(torch.load(args.lq_proj_ckpt, map_location="cpu"), strict=True)
-    pipe.TCDecoder = build_tcdecoder(new_channels=[512, 256, 128, 128], new_latent_channels=16 + 768)
-    pipe.TCDecoder.load_state_dict(torch.load(args.tc_decoder_ckpt, map_location="cpu"), strict=False)
-    pipe.to(args.device)
-    pipe.enable_vram_management(num_persistent_param_in_dit=None)
-    pipe.init_cross_kv()
-    pipe.load_models_to_device(["dit", "vae"])
-    return pipe
+    return finalize_flashvsr_inference_pipeline(
+        pipe,
+        decoder=args.decoder,
+        lq_proj_ckpt=args.lq_proj_ckpt,
+        dtype=dtype,
+        device=args.device,
+    )
 
 
 def run_one(pipe, path: Path, args) -> Path:
@@ -79,7 +83,12 @@ def run_one(pipe, path: Path, args) -> Path:
     )
     label = "LSWA_student" if args.student_ckpt else "LSWA_direct"
     frames = tensor_to_pil(video, canvas=canvas, keep_frames=keep_frames)
-    out_path = build_output_path(save_root=args.save_root, input_path=path, model_type=label, seed=args.seed)
+    out_path = build_output_path(
+        save_root=args.save_root,
+        input_path=path,
+        model_type=decoder_model_type(label, args.decoder),
+        seed=args.seed,
+    )
     save_video(frames, out_path, fps=fps, quality=args.quality)
     return out_path
 
@@ -92,7 +101,9 @@ def build_parser():
     p.add_argument("--base-model-weight", required=True)
     p.add_argument("--student-ckpt", default="")
     p.add_argument("--lq-proj-ckpt", required=True)
-    p.add_argument("--tc-decoder-ckpt", required=True)
+    p.add_argument("--tc-decoder-ckpt", default="")
+    p.add_argument("--wan-vae-ckpt", default="")
+    p.add_argument("--decoder", default="tcdecoder", type=normalize_decoder_name, choices=DECODER_ARG_CHOICES)
     p.add_argument("--window-size", default="2,21,21")
     p.add_argument("--max-videos", type=int, default=0)
     p.add_argument("--max-frames", type=int, default=0)

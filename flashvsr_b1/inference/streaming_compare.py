@@ -154,6 +154,126 @@ def dtype_from_name(name: str) -> torch.dtype:
     }[name.lower()]
 
 
+DECODER_ALIASES = {
+    "tc": "tcdecoder",
+    "tcd": "tcdecoder",
+    "tiny": "tcdecoder",
+    "tcdecoder": "tcdecoder",
+    "tc_decoder": "tcdecoder",
+    "tc-decoder": "tcdecoder",
+    "wan": "wanvae",
+    "wanvae": "wanvae",
+    "wan_vae": "wanvae",
+    "wan-vae": "wanvae",
+    "full": "wanvae",
+}
+
+DECODER_ARG_CHOICES = ("tcdecoder", "wanvae")
+
+
+def normalize_decoder_name(name: str) -> str:
+    key = str(name).strip().lower()
+    try:
+        return DECODER_ALIASES[key]
+    except KeyError as exc:
+        valid = ", ".join(sorted(DECODER_ALIASES))
+        raise ValueError(f"decoder must be one of: {valid}; got {name!r}") from exc
+
+
+def decoder_model_type(base_model_type: str, decoder: str) -> str:
+    decoder = normalize_decoder_name(decoder)
+    if decoder == "tcdecoder":
+        return base_model_type
+    return f"{base_model_type}_WanVAE"
+
+
+def _require_checkpoint_arg(path: str | None, arg_name: str, decoder: str) -> str:
+    if path:
+        return str(path)
+    raise ValueError(f"{arg_name} is required when --decoder={decoder}")
+
+
+def _flashvsr_pipeline_class(decoder: str):
+    import diffsynth
+
+    class_name = "FlashVSRFullPipeline" if decoder == "wanvae" else "FlashVSRTinyPipeline"
+    pipeline_cls = getattr(diffsynth, class_name, None)
+    if pipeline_cls is None:
+        raise ImportError(
+            f"{class_name} is unavailable from the configured FlashVSR checkout. "
+            "Use OpenImagingLab/FlashVSR v1.1 or set FLASHVSR_ROOT to that checkout."
+        )
+    return pipeline_cls
+
+
+def create_flashvsr_inference_pipeline(
+    *,
+    decoder: str,
+    model_weight: str,
+    wan_vae_ckpt: str | None,
+    tc_decoder_ckpt: str | None,
+    dtype: torch.dtype,
+    device: str,
+):
+    from diffsynth import ModelManager
+
+    decoder = normalize_decoder_name(decoder)
+    mm = ModelManager(torch_dtype=dtype, device="cpu")
+    model_paths = [str(model_weight)]
+    if decoder == "wanvae":
+        model_paths.append(_require_checkpoint_arg(wan_vae_ckpt, "--wan-vae-ckpt", decoder))
+    mm.load_models(model_paths)
+
+    pipeline_cls = _flashvsr_pipeline_class(decoder)
+    pipe = pipeline_cls.from_model_manager(mm, device=device)
+
+    if decoder == "tcdecoder":
+        from utils.TCDecoder import build_tcdecoder
+
+        tc_decoder_ckpt = _require_checkpoint_arg(tc_decoder_ckpt, "--tc-decoder-ckpt", decoder)
+        pipe.TCDecoder = build_tcdecoder(new_channels=[512, 256, 128, 128], new_latent_channels=16 + 768)
+        pipe.TCDecoder.load_state_dict(torch.load(tc_decoder_ckpt, map_location="cpu"), strict=False)
+    return pipe
+
+
+def _configure_wan_vae_decode_only(pipe) -> None:
+    vae_model = getattr(getattr(pipe, "vae", None), "model", None)
+    if vae_model is None:
+        return
+    for attr in ("encoder", "conv1"):
+        if hasattr(vae_model, attr):
+            setattr(vae_model, attr, None)
+
+
+def finalize_flashvsr_inference_pipeline(
+    pipe,
+    *,
+    decoder: str,
+    lq_proj_ckpt: str,
+    dtype: torch.dtype,
+    device: str,
+):
+    from utils.utils import Causal_LQ4x_Proj
+
+    decoder = normalize_decoder_name(decoder)
+    pipe.denoising_model().LQ_proj_in = Causal_LQ4x_Proj(
+        in_dim=3,
+        out_dim=1536,
+        layer_num=1,
+    ).to(device, dtype=dtype)
+    pipe.denoising_model().LQ_proj_in.load_state_dict(
+        torch.load(lq_proj_ckpt, map_location="cpu"),
+        strict=True,
+    )
+    if decoder == "wanvae":
+        _configure_wan_vae_decode_only(pipe)
+    pipe.to(device)
+    pipe.enable_vram_management(num_persistent_param_in_dit=None)
+    pipe.init_cross_kv()
+    pipe.load_models_to_device(["dit", "vae"])
+    return pipe
+
+
 def add_flashvsr_to_path(flashvsr_root: str | None) -> None:
     root = flashvsr_root or os.environ.get("FLASHVSR_ROOT")
     if not root:

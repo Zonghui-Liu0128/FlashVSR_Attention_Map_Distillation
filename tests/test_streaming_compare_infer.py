@@ -6,7 +6,9 @@ from flashvsr_b1.inference.streaming_compare import (
     build_output_path,
     canvas_for_model_input,
     discover_inputs,
+    decoder_model_type,
     normalize_dit_state_dict,
+    normalize_decoder_name,
     parse_window_size,
     select_streaming_frame_count,
 )
@@ -71,6 +73,19 @@ def test_normalize_dit_state_dict_splits_b1_qkv_keys():
     assert torch.equal(state["blocks.0.self_attn.v.bias"], torch.tensor([4, 5]))
 
 
+def test_decoder_name_aliases_select_tcdecoder_or_wanvae():
+    assert normalize_decoder_name("tc") == "tcdecoder"
+    assert normalize_decoder_name("tiny") == "tcdecoder"
+    assert normalize_decoder_name("wan") == "wanvae"
+    assert normalize_decoder_name("WanVAE") == "wanvae"
+    assert normalize_decoder_name("full") == "wanvae"
+
+
+def test_decoder_model_type_keeps_tcdecoder_compat_and_marks_wanvae():
+    assert decoder_model_type("BSA_baseline", "tcdecoder") == "BSA_baseline"
+    assert decoder_model_type("BSA_baseline", "wanvae") == "BSA_baseline_WanVAE"
+
+
 def test_build_output_path_includes_model_and_seed(tmp_path):
     out = build_output_path(
         save_root=tmp_path,
@@ -83,27 +98,12 @@ def test_build_output_path_includes_model_and_seed(tmp_path):
 
 
 def test_bash_launcher_exposes_b200_runtime_knobs():
-    script = Path("scripts/40_run_b1_infer_three_cases.sh").read_text()
+    script = Path("scripts/run_infer.sh").read_text()
 
-    assert "B200 FlashVSR v1.1 Tiny / B1 inference" in script
-    assert "COMMON_ARGS" not in script
-    assert 'export FLASHVSR_ROOT="${FLASHVSR_ROOT:-}"' in script
-    assert 'export FLASHVSR_ROOT="${FLASHVSR_ROOT:-/srv' not in script
-    assert 'if [[ -n "$FLASHVSR_ROOT" ]]; then\n  check_dir "$FLASHVSR_ROOT"' in script
-    assert "FLASHVSR_ROOT_ARG=()" in script
-    assert '"${FLASHVSR_ROOT_ARG[@]}"' in script
-    assert "check_flashvsr_imports" in script
-    assert "check_file \"$BASE_MODEL_WEIGHT\"" in script
-    assert "check_file \"$LQ_PROJ_CKPT\"" in script
-    assert "check_file \"$TC_DECODER_CKPT\"" in script
-    assert "Case 1/3: BSA baseline" in script
-    assert "Case 2/3: LSWA direct baseline" in script
-    assert "Case 3/3: LSWA trained student" in script
-    assert "export RUN_BSA_BASELINE=\"${RUN_BSA_BASELINE:-1}\"" in script
-    assert "export RUN_LSWA_DIRECT=\"${RUN_LSWA_DIRECT:-1}\"" in script
-    assert "export RUN_LSWA_STUDENT=\"${RUN_LSWA_STUDENT:-1}\"" in script
-    assert "export SCALE=\"${SCALE:-1.0}\"" in script
-    assert "export TEST_PATH=\"${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test}\"" in script
+    assert "DECODER=${DECODER:-tcdecoder}" in script
+    assert "WAN_VAE_CKPT=${WAN_VAE_CKPT:-${FLASHVSR_CKPT_DIR}/Wan2.1_VAE.pth}" in script
+    assert "--decoder" in script
+    assert "--wan-vae-ckpt" in script
     assert "infer_bsa_baseline.py" in script
     assert "infer_lswa.py" in script
     assert "--scale" in script
@@ -115,7 +115,7 @@ def test_bash_launcher_exposes_b200_runtime_knobs():
 def test_bsa_python_script_is_official_baseline_only():
     script = Path("scripts/infer_bsa_baseline.py").read_text()
 
-    assert "FlashVSRTinyPipeline" in script
+    assert "create_flashvsr_inference_pipeline" in script
     assert "FlashVSRTinyLongPipeline" not in script
     assert "sys.path.insert" in script
     assert "replace_dit_with_lswa" not in script
@@ -123,6 +123,8 @@ def test_bsa_python_script_is_official_baseline_only():
     assert "--model-weight" in script
     assert "--lq-proj-ckpt" in script
     assert "--tc-decoder-ckpt" in script
+    assert "--wan-vae-ckpt" in script
+    assert "--decoder" in script
 
 
 def test_lswa_python_script_supports_direct_and_student_modes():
@@ -132,7 +134,9 @@ def test_lswa_python_script_supports_direct_and_student_modes():
     assert "--student-ckpt" in script
     assert "--window-size" in script
     assert "--scale" in script
-    assert "FlashVSRTinyPipeline" in script
+    assert "create_flashvsr_inference_pipeline" in script
     assert "FlashVSRTinyLongPipeline" not in script
     assert "sys.path.insert" in script
     assert "normalize_dit_state_dict" in script
+    assert "--wan-vae-ckpt" in script
+    assert "--decoder" in script
