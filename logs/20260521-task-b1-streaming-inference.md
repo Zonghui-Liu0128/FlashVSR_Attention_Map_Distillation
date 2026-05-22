@@ -7,14 +7,15 @@ Implemented a FlashVSR v1.1-style comparison inference entry for the 960x720 off
 ## Files
 
 - `flashvsr_b1/inference/streaming_compare.py`
-  - CLI for BSA / LSWA streaming inference.
-  - Supports test path discovery, model-input 960x720 padding to 128 multiples, frame padding to FlashVSR's `8n+1` contract, B1 `.pt` qkv checkpoint key conversion, and manifest output.
-  - BSA uses the official FlashVSR pipeline by default.
-  - LSWA or B1 `.pt` checkpoints replace the official DiT with the repo-root `wan_video_dit.py` WanModel, preserving official pipeline streaming/decode behavior.
-- `scripts/40_infer_streaming_compare.sh`
-  - B200 launcher with environment-variable knobs for `MODEL_TYPE`, `TEST_PATH`, `MODEL_WEIGHT`, `BASE_MODEL_WEIGHT`, `SAVE_ROOT`, and `WINDOW_SIZE`.
+  - Small shared helpers only: input discovery, `scale` + padding, FlashVSR frame contract, video saving, LSWA DiT replacement, and B1 `.pt` qkv checkpoint key conversion.
+- `scripts/infer_bsa_baseline.py`
+  - Thin FlashVSR v1.1 Tiny BSA baseline script, matching the official example style.
+- `scripts/infer_lswa.py`
+  - Thin LSWA script. Without `--student-ckpt`, it runs open BSA weights through the LSWA attention implementation as a direct baseline. With `--student-ckpt`, it loads the trained LSWA student.
+- `scripts/40_run_b1_infer_three_cases.sh`
+  - B200 launcher that serially runs BSA baseline, LSWA direct baseline, and optional LSWA student.
 - `tests/test_streaming_compare_infer.py`
-  - Covers CLI helper behavior and checkpoint key conversion.
+  - Covers helper behavior, script shape, `scale`, and checkpoint key conversion.
 
 ## B200 Usage
 
@@ -22,29 +23,30 @@ Official BSA v1.1 baseline:
 
 ```bash
 FLASHVSR_ROOT=/path/to/OpenImagingLab/FlashVSR \
-MODEL_TYPE=BSA \
 TEST_PATH=/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test \
 SAVE_ROOT=/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_outputs/b1_compare \
-scripts/40_infer_streaming_compare.sh
+RUN_LSWA_DIRECT=0 \
+RUN_LSWA_STUDENT=0 \
+scripts/40_run_b1_infer_three_cases.sh
 ```
 
-LSWA trained checkpoint:
+All three cases. `SCALE=1.0` is the B1 training/inference default for the preprocessed 960x720 model-input LQ videos. Use `SCALE=4.0` only when testing native low-resolution LQ inputs with open FlashVSR-style 4x upscaling.
 
 ```bash
 FLASHVSR_ROOT=/path/to/OpenImagingLab/FlashVSR \
-MODEL_TYPE=LSWA \
-MODEL_WEIGHT=/path/to/log/.../ckpt/latest.pt \
+LSWA_STUDENT_CKPT=/path/to/log/.../ckpt/latest.pt \
 WINDOW_SIZE=2,21,21 \
+SCALE=1.0 \
 SAVE_ROOT=/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_outputs/b1_compare \
-scripts/40_infer_streaming_compare.sh
+scripts/40_run_b1_infer_three_cases.sh
 ```
 
-If `MODEL_WEIGHT` is a B1 `.pt` checkpoint, `BASE_MODEL_WEIGHT` is used to instantiate the official FlashVSR v1.1 model before loading the student weights.
+The baseline model is FlashVSR v1.1 Tiny (`diffusion_pytorch_model_streaming_dmd.safetensors`, `LQ_proj_in.ckpt`, `TCDecoder.ckpt`). `BASE_MODEL_WEIGHT` instantiates the open Tiny model before LSWA replacement and optional student checkpoint loading.
 
 ## Verification
 
 ```bash
 pytest tests/test_streaming_compare_infer.py tests/test_scripts.py -q
-python -m flashvsr_b1.inference.streaming_compare --dry-run --test-path <tmpdir> --max-videos 1
-python -m compileall flashvsr_b1/inference
+python -m py_compile scripts/infer_bsa_baseline.py scripts/infer_lswa.py flashvsr_b1/inference/streaming_compare.py
+bash -n scripts/40_run_b1_infer_three_cases.sh
 ```

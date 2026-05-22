@@ -26,6 +26,14 @@ def test_canvas_for_960x720_pads_to_block_safe_multiple():
     assert spec.output_crop_box == (0, 0, 960, 720)
 
 
+def test_canvas_scale_4_maps_native_lq_to_4x_hq_canvas():
+    spec = canvas_for_model_input(width=240, height=180, multiple=128, mode="pad", scale=4.0)
+
+    assert (spec.source_width, spec.source_height) == (960, 720)
+    assert (spec.target_width, spec.target_height) == (1024, 768)
+    assert spec.output_crop_box == (0, 0, 960, 720)
+
+
 def test_select_streaming_frame_count_matches_flashvsr_8n1_contract():
     selection = select_streaming_frame_count(total_frames=93, tail_padding=4)
 
@@ -75,11 +83,42 @@ def test_build_output_path_includes_model_and_seed(tmp_path):
 
 
 def test_bash_launcher_exposes_b200_runtime_knobs():
-    script = Path("scripts/40_infer_streaming_compare.sh").read_text()
+    script = Path("scripts/40_run_b1_infer_three_cases.sh").read_text()
 
-    assert "MODEL_TYPE=${MODEL_TYPE:-BSA}" in script
+    assert "RUN_BSA_BASELINE=${RUN_BSA_BASELINE:-1}" in script
+    assert "RUN_LSWA_DIRECT=${RUN_LSWA_DIRECT:-1}" in script
+    assert "RUN_LSWA_STUDENT=${RUN_LSWA_STUDENT:-1}" in script
+    assert "SCALE=${SCALE:-1.0}" in script
     assert "TEST_PATH=${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test}" in script
-    assert "--model-type" in script
+    assert "infer_bsa_baseline.py" in script
+    assert "infer_lswa.py" in script
+    assert "--scale" in script
     assert "--window-size" in script
-    assert "--model-weight" in script
+    assert "--student-ckpt" in script
     assert "--save-root" in script
+
+
+def test_bsa_python_script_is_official_baseline_only():
+    script = Path("scripts/infer_bsa_baseline.py").read_text()
+
+    assert "FlashVSRTinyPipeline" in script
+    assert "FlashVSRTinyLongPipeline" not in script
+    assert "sys.path.insert" in script
+    assert "replace_dit_with_lswa" not in script
+    assert "--scale" in script
+    assert "--model-weight" in script
+    assert "--lq-proj-ckpt" in script
+    assert "--tc-decoder-ckpt" in script
+
+
+def test_lswa_python_script_supports_direct_and_student_modes():
+    script = Path("scripts/infer_lswa.py").read_text()
+
+    assert "replace_dit_with_lswa" in script
+    assert "--student-ckpt" in script
+    assert "--window-size" in script
+    assert "--scale" in script
+    assert "FlashVSRTinyPipeline" in script
+    assert "FlashVSRTinyLongPipeline" not in script
+    assert "sys.path.insert" in script
+    assert "normalize_dit_state_dict" in script
