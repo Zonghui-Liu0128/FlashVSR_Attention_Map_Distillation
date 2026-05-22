@@ -50,8 +50,11 @@ class DatasetB1(BasicVSRDataset_hw_crop):
         h, w = item["lr"].shape[-2:]
         landscape = w > h
         item["aspect_bucket"] = "landscape" if landscape else "portrait"
-        latent_t = self._latent_time_from_frame_count(int(item["lr"].shape[1]))
-        item["latent_shape"] = (latent_t, 64, 120) if landscape else (latent_t, 120, 64)
+        item["latent_shape"] = self._latent_shape_from_video(
+            frame_count=int(item["lr"].shape[1]),
+            height=int(h),
+            width=int(w),
+        )
         return item
 
     @staticmethod
@@ -80,6 +83,17 @@ class DatasetB1(BasicVSRDataset_hw_crop):
         if frame_count <= 0:
             raise ValueError(f"DatasetB1 expected positive frame count; got {frame_count}")
         return (frame_count + 3) // 4
+
+    @classmethod
+    def _latent_shape_from_video(cls, *, frame_count: int, height: int, width: int) -> tuple[int, int, int]:
+        if height <= 0 or width <= 0:
+            raise ValueError(f"DatasetB1 expected positive video shape; got height={height}, width={width}")
+        if height % 16 != 0 or width % 16 != 0:
+            raise ValueError(
+                f"DatasetB1 expected H/W divisible by 16 for Causal_LQ4x_Proj; "
+                f"got height={height}, width={width}"
+            )
+        return (cls._latent_time_from_frame_count(frame_count), height // 16, width // 16)
 
     @staticmethod
     def _bucket_for_sample(sample: dict[str, Any]) -> str:

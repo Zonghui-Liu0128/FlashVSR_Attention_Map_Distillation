@@ -560,12 +560,12 @@ def test_C12_bucket_sampler_strict_same_bucket_per_batch():
 # ---------------------------------------------------------------------------
 
 def test_C13_metrics_logger_seqlen_constant_matches_spec_latent_grid():
-    """spec §7.2 SEQLEN_PER_VIDEO = 22 * 64 * 120 = 168960. This is the
-    post-patch token grid BSA sees (task_b1.md line 113/310), NOT the
-    pre-patch VAE latent (which would be 22*128*240). If a future change
+    """960x720@93 SEQLEN_PER_VIDEO = 24 * 45 * 60 = 64800. This is the
+    post-patch token grid BSA sees, NOT the pre-patch VAE latent
+    (which would be 24*90*120). If a future change
     accidentally drops a patch_size factor anywhere, this constant flags it."""
     from flashvsr_b1.train.metrics_logger import MetricsLogger
-    assert MetricsLogger.SEQLEN_PER_VIDEO == 22 * 64 * 120 == 168960, (
+    assert MetricsLogger.SEQLEN_PER_VIDEO == 24 * 45 * 60 == 64800, (
         "If grid_shape ends up being patchified, throughput will be wrong by patch volume."
     )
 

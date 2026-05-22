@@ -16,7 +16,8 @@ def make_run_dir(log_root: str, config_path: str) -> str:
 
 
 class MetricsLogger:
-    SEQLEN_PER_VIDEO = 22 * 64 * 120
+    # 960x720@93 -> LQ projector token grid (ceil(T/4), H/16, W/16).
+    SEQLEN_PER_VIDEO = 24 * 45 * 60
 
     JSONL_FIELDS = [
         "step",

@@ -8,9 +8,11 @@ existing stage3 pipeline:
     xymap_pc    -> zeros grid placeholder, [F, 2, H, W]
     data_name   -> stable sample id
 
-The new path source is `datapath_config_method: metadata_json`. It expands:
-metadata.json -> scenes -> fixed-frame clips -> resolution-aware crops, writes a
-frozen sample.json next to metadata.json, then trains from that sample.json.
+Supported path sources:
+  * `metadata_json`: scenes -> fixed-frame clips -> resolution-aware crops.
+  * `metadata_csv`: one preprocessed full-frame GT clip per CSV row, no center
+    crop or sliding crop planning before online degradation.
+Both paths write/read a frozen sample.json before training.
 """
 
 from __future__ import annotations
@@ -29,8 +31,11 @@ import torch
 # import torch.nn.functional as F
 from torchvision.utils import save_image
 
-from ..sample_index import build_sample_records_from_metadata, validate_sample_index_contract
-from .operators import *
+from ..sample_index import (
+    build_sample_records_from_csv,
+    build_sample_records_from_metadata,
+    validate_sample_index_contract,
+)
 from .degradations import (
     USMSharp,
     circular_lowpass_kernel,
@@ -147,19 +152,25 @@ class BasicVSRDataset_hw_crop(torch.utils.data.Dataset):
         self._vis_saved = 0
 
         datapath_config_method = opt.get("datapath_config_method", "metadata_json")
-        if datapath_config_method != "metadata_json":
+        if datapath_config_method not in {"metadata_json", "metadata_csv"}:
             raise ValueError(
-                "This replacement BasicVSRDataset_hw_crop is metadata-json specific. "
-                "Set datapath_config_method: metadata_json, or keep the legacy file for CSV/H5/PNG datasets."
+                "BasicVSRDataset_hw_crop supports datapath_config_method "
+                f"metadata_json or metadata_csv, got {datapath_config_method!r}."
             )
 
-        metadata_json_path = opt["metadata_json_path"]
+        metadata_path = opt["metadata_csv_path"] if datapath_config_method == "metadata_csv" else opt["metadata_json_path"]
         sample_json_path = opt.get("sample_json_path", None)
         if sample_json_path is None:
-            sample_json_path = str(Path(metadata_json_path).resolve().parent / "sample.json")
+            if datapath_config_method == "metadata_csv":
+                sample_json_path = str(Path(metadata_path).resolve().with_suffix(".sample.json"))
+            else:
+                sample_json_path = str(Path(metadata_path).resolve().parent / "sample.json")
         self.sample_json_path = sample_json_path
         if opt.get("rebuild_sample_json", False) or not os.path.exists(sample_json_path):
-            sample_index = build_sample_records_from_metadata(opt)
+            if datapath_config_method == "metadata_csv":
+                sample_index = build_sample_records_from_csv(opt)
+            else:
+                sample_index = build_sample_records_from_metadata(opt)
             Path(sample_json_path).parent.mkdir(parents=True, exist_ok=True)
             tmp_sample_json_path = f"{sample_json_path}.tmp.{os.getpid()}"
             with open(tmp_sample_json_path, "w", encoding="utf-8") as f:

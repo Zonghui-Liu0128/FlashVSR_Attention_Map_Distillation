@@ -1,16 +1,16 @@
 # Metadata-driven FlashVSR/LSWA data config for internal B200 smoke/bring-up.
-# Target: train on first 45 frames from existing 85-frame sample index, 1024x1920 crop.
+# Target: CSV GT clips already prepared at WxH@T = 960x720@93. No center crop.
 
 train_mode: 0
 
-datapath_config_method: metadata_json
-metadata_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/scenes.json"
-sample_json_path: "/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/train_samples.json"
-rebuild_sample_json: false                          # set true after changing crop/frame/sampling policy
-read_resolution_with_cv2: true
+datapath_config_method: metadata_csv
+metadata_csv_path: "data/metadata_wxh_960x720.csv"
+sample_json_path: "data/metadata_wxh_960x720.sample.json"
+rebuild_sample_json: true                           # CSV rows are the training samples; rebuild keeps sample json in sync
+read_resolution_with_cv2: false
 strict_path_exists: true
-validate_clip_decode: true                          # when rebuilding, drop clips that cannot decode frame_num frames
-allow_frame_truncation: true                         # accept 85-frame sample indexes and read only frame_num frames
+validate_clip_decode: false
+allow_frame_truncation: false
 
 # video reader
 reader_backend: "cv2"
@@ -20,24 +20,24 @@ strict_decode: true
 allow_decode_fail_pad: false
 max_retry: 5
 
-# clip sampling: use existing 85-frame clips, but train-time reading truncates to 45 frames.
-frame_num: 45
-temporal_stride: 85
+# clip sampling: one full prepared CSV video per sample.
+frame_num: 93
+temporal_stride: 93
 include_tail_clip: true
 max_clips_per_scene: 0          # 0 = unlimited
 shuffle_samples: true
 max_samples: 0                  # 0 = all
 
-# spatial crop: resolution-aware crop planner, no resize before degradation.
+# spatial shape: CSV videos are already the target training clips.
 scl_factor: 4.0
-crop_height: 1024
-crop_width: 1920
-min_source_width: 1920
-min_source_height: 1024
-max_source_width: 2560
-max_source_height: 1440
-center_crop_max_width: 2304     # 1920-level sources use center crop only
-center_crop_max_height: 1536
+crop_height: 720
+crop_width: 960
+min_source_width: 960
+min_source_height: 720
+max_source_width: 960
+max_source_height: 720
+center_crop_max_width: 960
+center_crop_max_height: 720
 multi_crop_scale_threshold: 1.30
 sliding_crop_scale_threshold: 2.2
 spatial_crop_overlap: 0.25
@@ -53,7 +53,7 @@ save_images_: false
 save_degradation_stages: false
 vis_output_dir: "data/test_samples/debug"
 vis_num_samples: 0
-vis_frame_indices: [0, 8, 16, 32, 42, 44]
+vis_frame_indices: [0, 16, 32, 64, 92]
 
 # GT augmentation: disabled for clean HQ target.
 random_gain_: false

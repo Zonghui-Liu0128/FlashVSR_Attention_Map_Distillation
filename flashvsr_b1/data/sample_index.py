@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 from pathlib import Path
@@ -258,6 +259,153 @@ def _iter_scenes(video_info: dict[str, Any], total_frames: int | None) -> list[d
     if total_frames and total_frames > 0:
         return [{"scene_id": 0, "start_frame": 0, "end_frame": int(total_frames), "n_frames": int(total_frames)}]
     return []
+
+
+def _csv_row_value(row: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        value = row.get(name)
+        if value not in {None, ""}:
+            return value
+    lower_row = {str(k).strip().lower(): v for k, v in row.items()}
+    for name in names:
+        value = lower_row.get(name.strip().lower())
+        if value not in {None, ""}:
+            return value
+    return None
+
+
+def build_sample_records_from_csv(opt: dict[str, Any]) -> dict[str, Any]:
+    """Build one full-frame training sample per CSV row.
+
+    The CSV contract is already preprocessed by the data owner:
+    Path,Height,Width,Frame,FPS,Duration.  Unlike metadata-json scene sampling,
+    this path does not plan center/corner/sliding crops; each row is the final
+    GT clip shape used by online degradation.
+    """
+    metadata_csv_path = opt["metadata_csv_path"]
+    target_height = _as_int(opt.get("crop_height"), None)
+    target_width = _as_int(opt.get("crop_width"), None)
+    target_frame_num = _as_int(opt.get("frame_num"), None)
+    strict_path_exists = bool(opt.get("strict_path_exists", True))
+    read_resolution_with_cv2 = bool(opt.get("read_resolution_with_cv2", False))
+    validate_clip_decode = bool(opt.get("validate_clip_decode", False))
+
+    stats = {
+        "videos_seen": 0,
+        "videos_used": 0,
+        "scenes_seen": 0,
+        "scenes_used": 0,
+        "clips_built": 0,
+        "samples_built": 0,
+        "dropped_path_missing": 0,
+        "dropped_open_failed": 0,
+        "dropped_short_scene": 0,
+        "dropped_small_resolution": 0,
+        "dropped_resolution_filtered": 0,
+        "dropped_decode_failed": 0,
+        "dropped_shape_mismatch": 0,
+    }
+    samples: list[dict[str, Any]] = []
+
+    with open(metadata_csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row_idx, row in enumerate(reader):
+            stats["videos_seen"] += 1
+            path = str(_csv_row_value(row, "Path", "path", "video_path") or "").strip()
+            if not path or (strict_path_exists and not os.path.exists(path)):
+                stats["dropped_path_missing"] += 1
+                continue
+
+            height = _as_int(_csv_row_value(row, "Height", "height", "H", "h"), None)
+            width = _as_int(_csv_row_value(row, "Width", "width", "W", "w"), None)
+            total_frames = _as_int(_csv_row_value(row, "Frame", "Frames", "frame", "frames", "total_frames"), None)
+            fps = _as_float(_csv_row_value(row, "FPS", "fps"), None)
+            if read_resolution_with_cv2 or height is None or width is None or total_frames is None:
+                try:
+                    probe = get_video_info_cv2(path)
+                except Exception:
+                    stats["dropped_open_failed"] += 1
+                    continue
+                height = int(probe["height"]) if height is None or read_resolution_with_cv2 else int(height)
+                width = int(probe["width"]) if width is None or read_resolution_with_cv2 else int(width)
+                total_frames = (
+                    _as_int(probe.get("total_frames_cv2"), total_frames)
+                    if total_frames is None or read_resolution_with_cv2
+                    else int(total_frames)
+                )
+                if fps is None or fps <= 0:
+                    fps = _as_float(probe.get("fps_cv2"), fps)
+
+            if height is None or width is None or height <= 0 or width <= 0:
+                stats["dropped_small_resolution"] += 1
+                continue
+            if total_frames is None or total_frames <= 0:
+                stats["dropped_short_scene"] += 1
+                continue
+
+            frame_num = int(target_frame_num if target_frame_num is not None else total_frames)
+            crop_height = int(target_height if target_height is not None else height)
+            crop_width = int(target_width if target_width is not None else width)
+            if int(height) != crop_height or int(width) != crop_width:
+                stats["dropped_shape_mismatch"] += 1
+                continue
+            if int(total_frames) < frame_num:
+                stats["dropped_short_scene"] += 1
+                continue
+            if validate_clip_decode and not is_clip_decodable_cv2(path, 0, frame_num):
+                stats["dropped_decode_failed"] += 1
+                continue
+
+            sample_id = Path(path).stem
+            samples.append(
+                {
+                    "sample_id": sample_id,
+                    "video_id": sample_id,
+                    "csv_row": int(row_idx),
+                    "path": path,
+                    "fps": fps,
+                    "total_frames": int(total_frames),
+                    "source_height": int(height),
+                    "source_width": int(width),
+                    "orientation_transform": "none",
+                    "height": int(height),
+                    "width": int(width),
+                    "scene_id": 0,
+                    "scene_start": 0,
+                    "scene_end": int(total_frames),
+                    "scene_frames": int(total_frames),
+                    "clip_id": 0,
+                    "clip_start": 0,
+                    "clip_end": int(frame_num),
+                    "frame_num": int(frame_num),
+                    "crop_x": 0,
+                    "crop_y": 0,
+                    "crop_width": crop_width,
+                    "crop_height": crop_height,
+                    "crop_policy": "full_frame_csv",
+                    "crop_id": 0,
+                }
+            )
+            stats["videos_used"] += 1
+            stats["scenes_seen"] += 1
+            stats["scenes_used"] += 1
+            stats["clips_built"] += 1
+
+    stats["samples_built"] = len(samples)
+    return {
+        "source_metadata_csv": str(metadata_csv_path),
+        "config": {
+            "crop_height": int(target_height) if target_height is not None else None,
+            "crop_width": int(target_width) if target_width is not None else None,
+            "frame_num": int(target_frame_num) if target_frame_num is not None else None,
+            "strict_path_exists": strict_path_exists,
+            "read_resolution_with_cv2": read_resolution_with_cv2,
+            "validate_clip_decode": validate_clip_decode,
+            "crop_policy": "full_frame_csv",
+        },
+        "stats": stats,
+        "samples": samples,
+    }
 
 
 def build_sample_records_from_metadata(opt: dict[str, Any]) -> dict[str, Any]:

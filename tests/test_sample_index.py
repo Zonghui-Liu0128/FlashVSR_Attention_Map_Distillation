@@ -5,6 +5,52 @@ import pytest
 from flashvsr_b1.data import sample_index
 
 
+def test_build_sample_records_from_csv_uses_full_video_as_training_target(tmp_path, monkeypatch):
+    video_path = tmp_path / "000000_960x720_93f.mp4"
+    video_path.write_bytes(b"placeholder")
+    csv_path = tmp_path / "metadata_wxh_960x720.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "Path,Height,Width,Frame,FPS,Duration",
+                f"{video_path},720,960,93,93.0,1.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_if_spatial_crop_planner_is_used(**kwargs):
+        raise AssertionError(f"CSV metadata must not plan center/sliding crops: {kwargs}")
+
+    monkeypatch.setattr(sample_index, "plan_spatial_crops", fail_if_spatial_crop_planner_is_used)
+
+    index = sample_index.build_sample_records_from_csv(
+        {
+            "metadata_csv_path": str(csv_path),
+            "strict_path_exists": True,
+            "crop_height": 720,
+            "crop_width": 960,
+            "frame_num": 93,
+        }
+    )
+
+    assert index["stats"]["videos_seen"] == 1
+    assert index["stats"]["videos_used"] == 1
+    assert index["stats"]["samples_built"] == 1
+    sample = index["samples"][0]
+    assert sample["path"] == str(video_path)
+    assert sample["height"] == 720
+    assert sample["width"] == 960
+    assert sample["frame_num"] == 93
+    assert sample["crop_x"] == 0
+    assert sample["crop_y"] == 0
+    assert sample["crop_height"] == 720
+    assert sample["crop_width"] == 960
+    assert sample["crop_policy"] == "full_frame_csv"
+    assert sample["clip_start"] == 0
+    assert sample["clip_end"] == 93
+
+
 def test_build_sample_records_drops_undecodable_clip_when_validation_enabled(tmp_path, monkeypatch):
     video_path = tmp_path / "video.mp4"
     video_path.write_bytes(b"placeholder")
