@@ -1,166 +1,63 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "B200 FlashVSR v1.1 Tiny / B1 inference"
-echo "Run order: BSA baseline -> LSWA direct baseline -> LSWA trained student"
-
-# =========================
-# B200 paths. Edit here only.
-# =========================
 export PROJECT_ROOT="${PROJECT_ROOT:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation}"
-export FLASHVSR_ROOT="${FLASHVSR_ROOT:-}"
-export TEST_PATH="${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test}"
-export FLASHVSR_CKPT_DIR="${FLASHVSR_CKPT_DIR:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1}"
-
-# FlashVSR v1.1 Tiny baseline weights.
-export BASE_MODEL_WEIGHT="${BASE_MODEL_WEIGHT:-${FLASHVSR_CKPT_DIR}/diffusion_pytorch_model_streaming_dmd.safetensors}"
-export LQ_PROJ_CKPT="${LQ_PROJ_CKPT:-${FLASHVSR_CKPT_DIR}/LQ_proj_in.ckpt}"
-export TC_DECODER_CKPT="${TC_DECODER_CKPT:-${FLASHVSR_CKPT_DIR}/TCDecoder.ckpt}"
-
-# Your trained LSWA student checkpoint. Leave empty to skip Case 3.
-export LSWA_STUDENT_CKPT="${LSWA_STUDENT_CKPT:-}"
-
-# Outputs and runtime knobs.
-export SAVE_ROOT="${SAVE_ROOT:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_outputs/b1_infer_three_cases}"
-export WINDOW_SIZE="${WINDOW_SIZE:-2,21,21}"
-export SCALE="${SCALE:-1.0}"          # B1 1x inference default. Use 4.0 only for native small-LQ 4x FlashVSR tests.
-export MAX_VIDEOS="${MAX_VIDEOS:-0}"  # 0 means all videos.
-export MAX_FRAMES="${MAX_FRAMES:-0}"  # 0 means full video; test set supports up to 93 frames.
-export SEED="${SEED:-0}"
-export DTYPE="${DTYPE:-bf16}"
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-
-# Per-case switches.
-export RUN_BSA_BASELINE="${RUN_BSA_BASELINE:-1}"
-export RUN_LSWA_DIRECT="${RUN_LSWA_DIRECT:-1}"
-export RUN_LSWA_STUDENT="${RUN_LSWA_STUDENT:-1}"
-
-check_dir() {
-  if [[ ! -d "$1" ]]; then
-    echo "[ERROR] Missing directory: $1" >&2
-    exit 1
-  fi
-}
-
-check_file() {
-  if [[ ! -f "$1" ]]; then
-    echo "[ERROR] Missing file: $1" >&2
-    exit 1
-  fi
-}
-
-FLASHVSR_ROOT_ARG=()
-if [[ -n "$FLASHVSR_ROOT" ]]; then
-  check_dir "$FLASHVSR_ROOT"
-  FLASHVSR_ROOT_ARG=(--flashvsr-root "$FLASHVSR_ROOT")
-fi
-
-check_flashvsr_imports() {
-  python - <<'PY'
-import os
-import sys
-from pathlib import Path
-
-root = os.environ.get("FLASHVSR_ROOT", "")
-if root:
-    sys.path.insert(0, str(Path(root) / "examples" / "WanVSR"))
-    sys.path.insert(0, root)
-
-try:
-    from diffsynth import FlashVSRTinyPipeline, ModelManager
-    from utils.TCDecoder import build_tcdecoder
-    from utils.utils import Causal_LQ4x_Proj
-except Exception as exc:
-    print(f"[ERROR] FlashVSR imports failed: {exc!r}", file=sys.stderr)
-    print("[ERROR] Current Python must provide diffsynth plus FlashVSR examples/WanVSR utils.", file=sys.stderr)
-    print("[ERROR] If imports are not globally available, set FLASHVSR_ROOT=/path/to/OpenImagingLab/FlashVSR.", file=sys.stderr)
-    raise
-
-print("[OK] FlashVSR imports ready")
-PY
-}
-
-check_dir "$PROJECT_ROOT"
-check_dir "$TEST_PATH"
-check_file "$BASE_MODEL_WEIGHT"
-check_file "$LQ_PROJ_CKPT"
-check_file "$TC_DECODER_CKPT"
-
-mkdir -p "$SAVE_ROOT"
 cd "$PROJECT_ROOT"
-check_flashvsr_imports
 
-echo "[CONFIG] PROJECT_ROOT=$PROJECT_ROOT"
-echo "[CONFIG] FLASHVSR_ROOT=${FLASHVSR_ROOT:-<current Python environment>}"
-echo "[CONFIG] TEST_PATH=$TEST_PATH"
-echo "[CONFIG] BASE_MODEL_WEIGHT=$BASE_MODEL_WEIGHT"
-echo "[CONFIG] LQ_PROJ_CKPT=$LQ_PROJ_CKPT"
-echo "[CONFIG] TC_DECODER_CKPT=$TC_DECODER_CKPT"
-echo "[CONFIG] LSWA_STUDENT_CKPT=${LSWA_STUDENT_CKPT:-<empty>}"
-echo "[CONFIG] SAVE_ROOT=$SAVE_ROOT"
-echo "[CONFIG] SCALE=$SCALE WINDOW_SIZE=$WINDOW_SIZE MAX_VIDEOS=$MAX_VIDEOS MAX_FRAMES=$MAX_FRAMES"
+TEST_PATH=${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test} # 测试集地址
+FLASHVSR_ROOT=${FLASHVSR_ROOT:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR}
+FLASHVSR_CKPT_DIR=${FLASHVSR_CKPT_DIR:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1}
+BASE_MODEL_WEIGHT=${BASE_MODEL_WEIGHT:-${FLASHVSR_CKPT_DIR}/diffusion_pytorch_model_streaming_dmd.safetensors}
+LQ_PROJ_CKPT=${LQ_PROJ_CKPT:-${FLASHVSR_CKPT_DIR}/LQ_proj_in.ckpt}
+TC_DECODER_CKPT=${TC_DECODER_CKPT:-${FLASHVSR_CKPT_DIR}/TCDecoder.ckpt}
+LSWA_STUDENT_CKPT=${LSWA_STUDENT_CKPT:-}
+SAVE_ROOT=${SAVE_ROOT:-outputs/baseline_flashvsr_v1.1_tiny/animal_test}    # predicated hq保存地址
+WINDOW_SIZE=${WINDOW_SIZE:-2,21,21}
+MAX_VIDEOS=${MAX_VIDEOS:-0}
+MAX_FRAMES=${MAX_FRAMES:-0}
+SEED=${SEED:-0}
+DTYPE=${DTYPE:-bf16}
+SCALE=${SCALE:-1.0} # 4x超分 or 单倍超分
+
+# 推理模式
+RUN_BSA_BASELINE=${RUN_BSA_BASELINE:-1}
+RUN_LSWA_DIRECT=${RUN_LSWA_DIRECT:-0}
+RUN_LSWA_STUDENT=${RUN_LSWA_STUDENT:-0}
+
+COMMON_ARGS=(
+  --input "$TEST_PATH"
+  --save-root "$SAVE_ROOT"
+  --flashvsr-root "$FLASHVSR_ROOT"
+  --lq-proj-ckpt "$LQ_PROJ_CKPT"
+  --tc-decoder-ckpt "$TC_DECODER_CKPT"
+  --max-videos "$MAX_VIDEOS"
+  --max-frames "$MAX_FRAMES"
+  --seed "$SEED"
+  --dtype "$DTYPE"
+  --scale "$SCALE"
+)
 
 if [[ "$RUN_BSA_BASELINE" == "1" ]]; then
-  echo "========== Case 1/3: BSA baseline (official FlashVSR v1.1 Tiny) =========="
   python scripts/infer_bsa_baseline.py \
-    --input "$TEST_PATH" \
-    --save-root "$SAVE_ROOT" \
-    "${FLASHVSR_ROOT_ARG[@]}" \
-    --model-weight "$BASE_MODEL_WEIGHT" \
-    --lq-proj-ckpt "$LQ_PROJ_CKPT" \
-    --tc-decoder-ckpt "$TC_DECODER_CKPT" \
-    --scale "$SCALE" \
-    --max-videos "$MAX_VIDEOS" \
-    --max-frames "$MAX_FRAMES" \
-    --seed "$SEED" \
-    --dtype "$DTYPE"
-else
-  echo "[SKIP] Case 1/3: BSA baseline"
+    "${COMMON_ARGS[@]}" \
+    --model-weight "$BASE_MODEL_WEIGHT"
 fi
 
 if [[ "$RUN_LSWA_DIRECT" == "1" ]]; then
-  echo "========== Case 2/3: LSWA direct baseline (open BSA weights + LSWA attention) =========="
   python scripts/infer_lswa.py \
-    --input "$TEST_PATH" \
-    --save-root "$SAVE_ROOT" \
-    "${FLASHVSR_ROOT_ARG[@]}" \
+    "${COMMON_ARGS[@]}" \
     --base-model-weight "$BASE_MODEL_WEIGHT" \
-    --lq-proj-ckpt "$LQ_PROJ_CKPT" \
-    --tc-decoder-ckpt "$TC_DECODER_CKPT" \
-    --window-size "$WINDOW_SIZE" \
-    --scale "$SCALE" \
-    --max-videos "$MAX_VIDEOS" \
-    --max-frames "$MAX_FRAMES" \
-    --seed "$SEED" \
-    --dtype "$DTYPE"
-else
-  echo "[SKIP] Case 2/3: LSWA direct baseline"
+    --window-size "$WINDOW_SIZE"
 fi
 
 if [[ "$RUN_LSWA_STUDENT" == "1" ]]; then
-  echo "========== Case 3/3: LSWA trained student =========="
   if [[ -z "$LSWA_STUDENT_CKPT" ]]; then
-    echo "[SKIP] LSWA_STUDENT_CKPT is empty. Set it to your trained latest.pt/step_xxx.pt."
+    echo "LSWA_STUDENT_CKPT is empty; skip LSWA student inference."
   else
-    check_file "$LSWA_STUDENT_CKPT"
     python scripts/infer_lswa.py \
-      --input "$TEST_PATH" \
-      --save-root "$SAVE_ROOT" \
-      "${FLASHVSR_ROOT_ARG[@]}" \
+      "${COMMON_ARGS[@]}" \
       --base-model-weight "$BASE_MODEL_WEIGHT" \
       --student-ckpt "$LSWA_STUDENT_CKPT" \
-      --lq-proj-ckpt "$LQ_PROJ_CKPT" \
-      --tc-decoder-ckpt "$TC_DECODER_CKPT" \
-      --window-size "$WINDOW_SIZE" \
-      --scale "$SCALE" \
-      --max-videos "$MAX_VIDEOS" \
-      --max-frames "$MAX_FRAMES" \
-      --seed "$SEED" \
-      --dtype "$DTYPE"
+      --window-size "$WINDOW_SIZE"
   fi
-else
-  echo "[SKIP] Case 3/3: LSWA trained student"
 fi
-
-echo "[DONE] Outputs are under: $SAVE_ROOT"
