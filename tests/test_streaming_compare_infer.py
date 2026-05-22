@@ -85,11 +85,19 @@ def test_build_output_path_includes_model_and_seed(tmp_path):
 def test_bash_launcher_exposes_b200_runtime_knobs():
     script = Path("scripts/40_run_b1_infer_three_cases.sh").read_text()
 
-    assert "RUN_BSA_BASELINE=${RUN_BSA_BASELINE:-1}" in script
-    assert "RUN_LSWA_DIRECT=${RUN_LSWA_DIRECT:-1}" in script
-    assert "RUN_LSWA_STUDENT=${RUN_LSWA_STUDENT:-1}" in script
-    assert "SCALE=${SCALE:-1.0}" in script
-    assert "TEST_PATH=${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test}" in script
+    assert "B200 FlashVSR v1.1 Tiny / B1 inference" in script
+    assert "COMMON_ARGS" not in script
+    assert "check_file \"$BASE_MODEL_WEIGHT\"" in script
+    assert "check_file \"$LQ_PROJ_CKPT\"" in script
+    assert "check_file \"$TC_DECODER_CKPT\"" in script
+    assert "Case 1/3: BSA baseline" in script
+    assert "Case 2/3: LSWA direct baseline" in script
+    assert "Case 3/3: LSWA trained student" in script
+    assert "export RUN_BSA_BASELINE=\"${RUN_BSA_BASELINE:-1}\"" in script
+    assert "export RUN_LSWA_DIRECT=\"${RUN_LSWA_DIRECT:-1}\"" in script
+    assert "export RUN_LSWA_STUDENT=\"${RUN_LSWA_STUDENT:-1}\"" in script
+    assert "export SCALE=\"${SCALE:-1.0}\"" in script
+    assert "export TEST_PATH=\"${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test}\"" in script
     assert "infer_bsa_baseline.py" in script
     assert "infer_lswa.py" in script
     assert "--scale" in script
