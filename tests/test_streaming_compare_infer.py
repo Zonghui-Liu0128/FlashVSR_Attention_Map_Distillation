@@ -87,6 +87,12 @@ def test_bash_launcher_exposes_b200_runtime_knobs():
 
     assert "B200 FlashVSR v1.1 Tiny / B1 inference" in script
     assert "COMMON_ARGS" not in script
+    assert 'export FLASHVSR_ROOT="${FLASHVSR_ROOT:-}"' in script
+    assert 'export FLASHVSR_ROOT="${FLASHVSR_ROOT:-/srv' not in script
+    assert 'if [[ -n "$FLASHVSR_ROOT" ]]; then\n  check_dir "$FLASHVSR_ROOT"' in script
+    assert "FLASHVSR_ROOT_ARG=()" in script
+    assert '"${FLASHVSR_ROOT_ARG[@]}"' in script
+    assert "check_flashvsr_imports" in script
     assert "check_file \"$BASE_MODEL_WEIGHT\"" in script
     assert "check_file \"$LQ_PROJ_CKPT\"" in script
     assert "check_file \"$TC_DECODER_CKPT\"" in script

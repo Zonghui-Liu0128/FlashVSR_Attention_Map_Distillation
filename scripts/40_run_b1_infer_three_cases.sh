@@ -8,7 +8,7 @@ echo "Run order: BSA baseline -> LSWA direct baseline -> LSWA trained student"
 # B200 paths. Edit here only.
 # =========================
 export PROJECT_ROOT="${PROJECT_ROOT:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR_Attention_Map_Distillation}"
-export FLASHVSR_ROOT="${FLASHVSR_ROOT:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/FlashVSR}"
+export FLASHVSR_ROOT="${FLASHVSR_ROOT:-}"
 export TEST_PATH="${TEST_PATH:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/line_buffer_research/vsr_datasets/animal_videos/videos_960x720/lq/test}"
 export FLASHVSR_CKPT_DIR="${FLASHVSR_CKPT_DIR:-/srv/workspace/Kirin_AI_Workspace/TMG_I/l00832862/shared_checkpoints/FlashVSR-v1.1}"
 
@@ -50,8 +50,38 @@ check_file() {
   fi
 }
 
+FLASHVSR_ROOT_ARG=()
+if [[ -n "$FLASHVSR_ROOT" ]]; then
+  check_dir "$FLASHVSR_ROOT"
+  FLASHVSR_ROOT_ARG=(--flashvsr-root "$FLASHVSR_ROOT")
+fi
+
+check_flashvsr_imports() {
+  python - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+root = os.environ.get("FLASHVSR_ROOT", "")
+if root:
+    sys.path.insert(0, str(Path(root) / "examples" / "WanVSR"))
+    sys.path.insert(0, root)
+
+try:
+    from diffsynth import FlashVSRTinyPipeline, ModelManager
+    from utils.TCDecoder import build_tcdecoder
+    from utils.utils import Causal_LQ4x_Proj
+except Exception as exc:
+    print(f"[ERROR] FlashVSR imports failed: {exc!r}", file=sys.stderr)
+    print("[ERROR] Current Python must provide diffsynth plus FlashVSR examples/WanVSR utils.", file=sys.stderr)
+    print("[ERROR] If imports are not globally available, set FLASHVSR_ROOT=/path/to/OpenImagingLab/FlashVSR.", file=sys.stderr)
+    raise
+
+print("[OK] FlashVSR imports ready")
+PY
+}
+
 check_dir "$PROJECT_ROOT"
-check_dir "$FLASHVSR_ROOT"
 check_dir "$TEST_PATH"
 check_file "$BASE_MODEL_WEIGHT"
 check_file "$LQ_PROJ_CKPT"
@@ -59,9 +89,10 @@ check_file "$TC_DECODER_CKPT"
 
 mkdir -p "$SAVE_ROOT"
 cd "$PROJECT_ROOT"
+check_flashvsr_imports
 
 echo "[CONFIG] PROJECT_ROOT=$PROJECT_ROOT"
-echo "[CONFIG] FLASHVSR_ROOT=$FLASHVSR_ROOT"
+echo "[CONFIG] FLASHVSR_ROOT=${FLASHVSR_ROOT:-<current Python environment>}"
 echo "[CONFIG] TEST_PATH=$TEST_PATH"
 echo "[CONFIG] BASE_MODEL_WEIGHT=$BASE_MODEL_WEIGHT"
 echo "[CONFIG] LQ_PROJ_CKPT=$LQ_PROJ_CKPT"
@@ -75,7 +106,7 @@ if [[ "$RUN_BSA_BASELINE" == "1" ]]; then
   python scripts/infer_bsa_baseline.py \
     --input "$TEST_PATH" \
     --save-root "$SAVE_ROOT" \
-    --flashvsr-root "$FLASHVSR_ROOT" \
+    "${FLASHVSR_ROOT_ARG[@]}" \
     --model-weight "$BASE_MODEL_WEIGHT" \
     --lq-proj-ckpt "$LQ_PROJ_CKPT" \
     --tc-decoder-ckpt "$TC_DECODER_CKPT" \
@@ -93,7 +124,7 @@ if [[ "$RUN_LSWA_DIRECT" == "1" ]]; then
   python scripts/infer_lswa.py \
     --input "$TEST_PATH" \
     --save-root "$SAVE_ROOT" \
-    --flashvsr-root "$FLASHVSR_ROOT" \
+    "${FLASHVSR_ROOT_ARG[@]}" \
     --base-model-weight "$BASE_MODEL_WEIGHT" \
     --lq-proj-ckpt "$LQ_PROJ_CKPT" \
     --tc-decoder-ckpt "$TC_DECODER_CKPT" \
@@ -116,7 +147,7 @@ if [[ "$RUN_LSWA_STUDENT" == "1" ]]; then
     python scripts/infer_lswa.py \
       --input "$TEST_PATH" \
       --save-root "$SAVE_ROOT" \
-      --flashvsr-root "$FLASHVSR_ROOT" \
+      "${FLASHVSR_ROOT_ARG[@]}" \
       --base-model-weight "$BASE_MODEL_WEIGHT" \
       --student-ckpt "$LSWA_STUDENT_CKPT" \
       --lq-proj-ckpt "$LQ_PROJ_CKPT" \
